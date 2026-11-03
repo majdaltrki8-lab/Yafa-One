@@ -1,16 +1,4 @@
-name: Build Yafa One APK
-
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
+steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -25,9 +13,11 @@ jobs:
       - name: Install Capacitor CLI & Android Runtime
         run: npm install @capacitor/cli @capacitor/core @capacitor/android
 
+      # 1. بناء تطبيق الويب أولاً لتوليد الملفات المطلوبة
       - name: Build Web App
         run: npm run build
 
+      # 2. إضافة منصة الأندرويد والمزامنة بعد توفر ملفات البناء
       - name: Add and Sync Android Platform
         run: |
           npx cap add android || true

@@ -1,13 +1,14 @@
-name: Build Yafa One APK
+name: Build Yafa One Android APK & AAB
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,6 +19,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Install Dependencies
         run: npm install
@@ -25,12 +27,17 @@ jobs:
       - name: Install Capacitor CLI & Android Runtime
         run: npm install @capacitor/cli @capacitor/core @capacitor/android
 
-      - name: Build Web App
+      - name: Build Next.js Web App
         run: npm run build
+        env:
+          NODE_ENV: production
+          PAYLOAD_SECRET: ${{ secrets.PAYLOAD_SECRET || 'ci-dummy-secret-key-yafa-one-2026' }}
 
-      - name: Add and Sync Android Platform
+      - name: Initialize or Sync Capacitor Android
         run: |
-          npx cap add android || true
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
       - name: Set up JDK 17
@@ -39,14 +46,27 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build Android APK
+      - name: Build Android Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK Artifact
+      - name: Build Android Release AAB (Unsigned / Bundle)
+        run: |
+          cd android
+          ./gradlew bundleRelease || echo "Release bundle requires signing keystore configured in Gradle. Skipping if keystore is missing."
+
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: yafa-one-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yafa-one-release-bundle
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: warn

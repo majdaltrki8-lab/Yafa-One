@@ -1,0 +1,41 @@
+{
+  "name": "figma-make-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3000 -H 0.0.0.0",
+    "build": "NODE_ENV=production next build",
+    "start": "next start -p 3000 -H 0.0.0.0",
+    "lint": "tsc --noEmit",
+    "format": "oxfmt"
+  },
+  "dependencies": {
+    "@payloadcms/figma": "1.0.0-beta.1",
+    "@payloadcms/next": "4.0.0-beta.3",
+    "@payloadcms/plugin-cloud-storage": "4.0.0-beta.3",
+    "@payloadcms/plugin-mcp": "4.0.0-beta.3",
+    "@payloadcms/richtext-lexical": "4.0.0-beta.3",
+    "@payloadcms/translations": "4.0.0-beta.3",
+    "@payloadcms/ui": "4.0.0-beta.3",
+    "graphql": "^16.8.1",
+    "html-react-parser": "^5.2.10",
+    "lucide-react": "^1.61.0",
+    "monaco-editor": "0.55.1",
+    "next": "16.4.0",
+    "payload": "4.0.0-beta.3",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "sharp": "^0.35.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "oxfmt": "^0.2.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "appId": "com.yafaone.app",
+  "appName": "يافع ون",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https"
+  }
+}

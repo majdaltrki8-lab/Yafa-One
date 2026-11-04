@@ -207,13 +207,18 @@ function createInitialStore(): Record<string, any[]> {
 export function mockDatabaseAdapter(): any {
   const store = createInitialStore()
 
-  return createDatabaseAdapter({
+  return {
     name: 'yafa-in-memory-db',
     defaultIDType: 'text',
-    init: () => {},
-    connect: async () => {
-      return Promise.resolve()
-    },
+    init: ({ payload }: { payload: any }) => {
+      return createDatabaseAdapter({
+        name: 'yafa-in-memory-db',
+        defaultIDType: 'text',
+        payload,
+        init: () => {},
+        connect: async () => {
+          return Promise.resolve()
+        },
     destroy: async () => {},
     beginTransaction: async () => null,
     commitTransaction: async () => {},
@@ -322,16 +327,19 @@ export function mockDatabaseAdapter(): any {
       return { id: where?.id?.equals || 'doc-1', ...data }
     },
     updateVersion: async ({ data }: any) => data,
-    upsert: async ({ collection, where, data }: any) => {
-      const records = store[collection] || []
-      const existing = records.find((r) => r.id === where?.id?.equals)
-      if (existing) {
-        Object.assign(existing, data, { updatedAt: new Date().toISOString() })
-        return existing
-      }
-      const newDoc = { id: where?.id?.equals || `${collection}-${Date.now()}`, ...data }
-      records.push(newDoc)
-      return newDoc
+        upsert: async ({ collection, where, data }: any) => {
+          const records = store[collection] || []
+          const existing = records.find((r) => r.id === where?.id?.equals)
+          if (existing) {
+            Object.assign(existing, data, { updatedAt: new Date().toISOString() })
+            return existing
+          }
+          const newDoc = { id: where?.id?.equals || `${collection}-${Date.now()}`, ...data }
+          records.push(newDoc)
+          return newDoc
+        },
+      } as any)
     },
-  } as any)
+  }
 }
+

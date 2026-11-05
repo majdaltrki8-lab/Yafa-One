@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "بيانات حساب المستخدم في منصة يافع ون",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "معرف المستخدم الموحد في Firebase Auth" },
+        "phoneNumber": { "type": "string", "description": "رقم الهاتف الدولي للمستخدم" },
+        "name": { "type": "string", "description": "الاسم الكامل للمستخدم" },
+        "role": { "type": "string", "enum": ["customer", "owner", "admin"], "description": "دور المستخدم في المنصة" },
+        "status": { "type": "string", "enum": ["active", "suspended", "pending"], "description": "حالة الحساب" },
+        "createdAt": { "type": "string", "description": "تاريخ إنشاء الحساب" }
+      },
+      "required": ["uid", "role", "status", "createdAt"]
+    },
+    "Establishment": {
+      "title": "Establishment",
+      "description": "بيانات المنشأة أو المتجر التجاري في يافع",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف المنشأة الفريد" },
+        "ownerId": { "type": "string", "description": "معرف صاحب المنشأة (UID)" },
+        "name": { "type": "string", "description": "اسم المتجر أو المنشأة" },
+        "district": { "type": "string", "description": "المديرية في يافع" },
+        "category": { "type": "string", "description": "النشاط التجاري" },
+        "phone": { "type": "string", "description": "رقم هاتف المنشأة" },
+        "approved": { "type": "boolean", "description": "هل تم اعتماد المنشأة من إدارة المنصة" },
+        "active": { "type": "boolean", "description": "هل المنشأة نشطة وتستقبل الطلبات" },
+        "createdAt": { "type": "string", "description": "تاريخ التسجيل" }
+      },
+      "required": ["id", "ownerId", "name", "district", "category", "approved", "active", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "بيانات المنتج أو الخدمة المعروضة",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف المنتج الفريد" },
+        "establishmentId": { "type": "string", "description": "معرف المنشأة التابع لها المنتج" },
+        "name": { "type": "string", "description": "اسم المنتج أو الخدمة" },
+        "price": { "type": "number", "description": "سعر المنتج" },
+        "currency": { "type": "string", "enum": ["YER", "SAR", "USD"], "description": "عملة السعر" },
+        "category": { "type": "string", "description": "تصنيف المنتج" },
+        "inStock": { "type": "boolean", "description": "حالة توفر المنتج في المخزون" },
+        "createdAt": { "type": "string", "description": "تاريخ الإضافة" }
+      },
+      "required": ["id", "establishmentId", "name", "price", "currency", "inStock", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "بيانات طلب شراء من متجر",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف الطلب الفريد" },
+        "customerId": { "type": "string", "description": "معرف العميل صاحب الطلب" },
+        "establishmentId": { "type": "string", "description": "معرف المنشأة المستقبلة للطلب" },
+        "total": { "type": "number", "description": "إجمالي قيمة الطلب" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "delivering", "completed", "cancelled"], "description": "حالة الطلب" },
+        "createdAt": { "type": "string", "description": "تاريخ إنشاء الطلب" }
+      },
+      "required": ["id", "customerId", "establishmentId", "total", "status", "createdAt"]
+    },
+    "Advertisement": {
+      "title": "Advertisement",
+      "description": "بيانات الإعلانات والبنرات في المنصة",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف الإعلان الفريد" },
+        "title": { "type": "string", "description": "عنوان الإعلان" },
+        "image": { "type": "string", "description": "رابط صورة الإعلان في Firebase Storage" },
+        "placement": { "type": "string", "description": "موضع الإعلان" },
+        "active": { "type": "boolean", "description": "حالة نشر الإعلان" },
+        "order": { "type": "number", "description": "ترتيب الظهور" },
+        "createdAt": { "type": "string", "description": "تاريخ الإضافة" }
+      },
+      "required": ["id", "title", "image", "placement", "active", "order", "createdAt"]
+    },
+    "AppearanceSetting": {
+      "title": "AppearanceSetting",
+      "description": "إعدادات المظهر والسمات والهوية البصرية لمنصة يافع ون",
+      "type": "object",
+      "properties": {
+        "version": { "type": "number", "description": "رقم إصدار التصميم" },
+        "updatedAt": { "type": "string", "description": "وقت آخر تحديث" }
+      },
+      "required": ["version", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "سجلات حسابات المستخدمين وأصحاب المنشآت والمديرين"
+    },
+    "/establishments/{establishmentId}": {
+      "schema": "Establishment",
+      "description": "سجلات المنشآت والمتاجر المسجلة في يافع"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "سجلات المنتجات والخدمات والسلع"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "طلبات الشراء ومتابعة الحالات"
+    },
+    "/advertisements/{advertisementId}": {
+      "schema": "Advertisement",
+      "description": "الإعلانات والبنرات التسويقية المعروضة للزوار"
+    },
+    "/settings/appearance": {
+      "schema": "AppearanceSetting",
+      "description": "إعدادات المظهر العام والألوان والشعارات والأقسام"
+    }
+  }
+}

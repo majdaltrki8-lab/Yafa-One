@@ -7,8 +7,53 @@ import {
   Grid2X2, Heart, Home, Image, KeyRound, Landmark, LayoutDashboard, LockKeyhole, LogOut, MapPin,
   Megaphone, Menu, MessageCircle, Package, Pencil, Pill, Plus, RefreshCw, Search, Settings, Share2, ShieldCheck,
   ShoppingBag, ShoppingCart, SlidersHorizontal, Stethoscope, Store, Trash2, Truck, Upload,
-  UserRound, UsersRound, Utensils, Wifi, WifiOff, Wrench, X
+  UserRound, UsersRound, Utensils, Wifi, WifiOff, Wrench, X, Palette
 } from "lucide-react";
+import AppearanceManager from "@/components/admin/AppearanceManager";
+import {
+  getLocalAppearance,
+  applyAppearanceToDOM,
+  APPEARANCE_EVENT_NAME,
+  type AppAppearance,
+  defaultAppearance,
+} from "@/lib/appearance";
+
+function useAppAppearance() {
+  const [appearance, setAppearance] = useState<AppAppearance>(defaultAppearance);
+
+  useEffect(() => {
+    const current = getLocalAppearance();
+    setAppearance(current);
+    applyAppearanceToDOM(current);
+
+    const onUpdate = (e: any) => {
+      const updated = e.detail || getLocalAppearance();
+      setAppearance(updated);
+      applyAppearanceToDOM(updated);
+    };
+
+    window.addEventListener(APPEARANCE_EVENT_NAME, onUpdate);
+
+    fetch("/api/appearance")
+      .then((res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get("content-type");
+        if (ct && ct.includes("application/json")) return res.json();
+        return null;
+      })
+      .then((data) => {
+        if (data?.success && data?.appearance) {
+          setAppearance(data.appearance);
+          applyAppearanceToDOM(data.appearance);
+        }
+      })
+      .catch(() => {});
+
+    return () => window.removeEventListener(APPEARANCE_EVENT_NAME, onUpdate);
+  }, []);
+
+  return appearance;
+}
 
 type Role = "owner" | "admin" | null;
 type Product = { id: number; name: string; price: number; stock: number; status: string; image?: string };
@@ -280,10 +325,23 @@ function Brand({ compact = false, portal }: { compact?: boolean; portal?: "visit
     else if (portal === "admin") route("/admin/dashboard");
     else route("/visitor/home");
   };
+  const appearance = useAppAppearance();
+  const logoText = appearance.brand?.logoText || "يافع ون";
+  const tagline = appearance.brand?.platformTagline || "سوق يافع الإلكتروني";
+  const parts = logoText.split(" ");
+  const main = parts[0] || "يافع";
+  const suffix = parts.slice(1).join(" ") || "ون";
+
   return <div className={`brand ${compact ? "brand-compact" : ""}`} onClick={handleClick} role="button" tabIndex={0}>
-    <div className="brand-mark" aria-hidden="true"><span>▲</span><span>▲</span><i /></div>
-    <strong>يافع <em>ون</em></strong>
-    {!compact && <small>سوق يافع الإلكتروني</small>}
+    <div className="brand-mark" aria-hidden="true">
+      {appearance.brand?.appIconUrl && appearance.brand.appIconUrl !== "/icons/icon-512.png" ? (
+        <img src={appearance.brand.appIconUrl} alt="" style={{ width: 26, height: 26, borderRadius: 6, objectFit: "cover" }} />
+      ) : (
+        <><span>▲</span><span>▲</span><i /></>
+      )}
+    </div>
+    <strong>{main} <em>{suffix}</em></strong>
+    {!compact && <small>{tagline}</small>}
   </div>;
 }
 
@@ -331,9 +389,11 @@ function TopBar({ back, admin = false, portal }: { back?: string; admin?: boolea
   </header>;
 }
 
-function ScenicHero({ title, subtitle, icon, image = hero, activity = false }: { title: string; subtitle: string; icon?: React.ReactNode; image?: string; activity?: boolean }) {
+function ScenicHero({ title, subtitle, icon, image, activity = false }: { title: string; subtitle: string; icon?: React.ReactNode; image?: string; activity?: boolean }) {
+  const appearance = useAppAppearance();
+  const effectiveImage = image || appearance.brand?.scenicLandscapeUrl || hero;
   const overlay = activity ? "linear-gradient(90deg,rgba(1,35,28,.88),rgba(1,35,28,.2))" : "linear-gradient(90deg,rgba(255,255,255,.94),rgba(255,255,255,.45))";
-  return <section className={`scenic-hero ${activity ? "activity-banner" : ""}`} style={{ backgroundImage: `${overlay},url(${image})` }}>
+  return <section className={`scenic-hero ${activity ? "activity-banner" : ""}`} style={{ backgroundImage: `${overlay},url(${effectiveImage})` }}>
     <div>{icon}<span className="eyebrow">يافع ون · يافع فقط</span><h1>{title}</h1><p>{subtitle}</p></div>
   </section>;
 }
@@ -352,11 +412,12 @@ function Toast() {
 }
 
 function Entry() {
+  const appearance = useAppAppearance();
   return <main className="entry" dir="rtl">
     <div className="entry-clouds" />
-    <img className="welcome-official-icon" src="/icons/icon-512.png" alt="يافع ون | YAFA ONE" />
+    <img className="welcome-official-icon" src={appearance.brand?.appIconUrl || "/icons/icon-512.png"} alt="يافع ون | YAFA ONE" />
     <Brand />
-    <section className="entry-copy"><h1>مرحباً بك في يافع ون</h1><p>سوق إلكتروني يجمع منتجات وخدمات يافع من أهلها وإلى أهلها</p></section>
+    <section className="entry-copy"><h1>مرحباً بك في {appearance.brand?.logoText || "يافع ون"}</h1><p>{appearance.brand?.platformTagline || "سوق إلكتروني يجمع منتجات وخدمات يافع من أهلها وإلى أهلها"}</p></section>
     <div className="entry-options">
       <button className="role-card" onClick={() => route("/visitor/home")}><ShoppingBag /><span><strong>دخول زائر</strong><small>تصفح السوق واكتشف المنتجات والخدمات بدون تسجيل دخول</small></span><ChevronLeft /></button>
       <button className="role-card" onClick={() => route("/auth/owner-login")}><Store /><span><strong>دخول صاحب المنشأة</strong><small>إدارة متجرك ومنتجاتك وطلبات متجرك فقط</small></span><ChevronLeft /></button>
@@ -508,6 +569,7 @@ function VisitorHome() {
   const [district, setDistrict] = useState(() => safeStorage.getItem("yafa-district") || "لبعوس");
   const [query, setQuery] = useState("");
   const activityImages = useActivityImages();
+  const appearance = useAppAppearance();
   const changeDistrict = (value: string) => {
     setDistrict(value);
     safeStorage.setItem("yafa-district", value);
@@ -528,14 +590,139 @@ function VisitorHome() {
       <label className="district-picker"><MapPin /><span>الموقع داخل يافع:</span><select value={district} onChange={(event) => changeDistrict(event.target.value)}>{yafaDistricts.map((name) => <option key={name}>{name}</option>)}</select></label>
     </header>
     <main className="page-content home-content">
-      <VisitorCarousel />
-      <section className="home-section"><SectionTitle title="جميع الأنشطة" action={() => route("/visitor/stores")} /><div className="activity-grid">{homeActivities.map(({ id, name, path, Icon, image }) => <button key={name} onClick={() => route(path)}><div className="activity-image"><img src={activityImages[id] || image} alt={`صورة ${name}`} loading="lazy" onError={(event) => { event.currentTarget.src = image; }} /><Icon /></div><span>{name}</span></button>)}</div><Button kind="outline" className="all-activities" onClick={() => route("/visitor/stores")}><Grid2X2 /> عرض جميع الأنشطة</Button></section>
-      <section className="home-section">
-        <div className="financial-service-grid" style={{ marginTop: "10px" }}>
-          <button onClick={() => route("/visitor/exchange-rates")}><img src="/assets/activities/exchange.jpg" alt="" loading="lazy" /><div><Landmark /><span><b>أسعار الصرف – جنوب اليمن</b><small>أسعار معتمدة من إدارة التطبيق</small></span><ChevronLeft /></div></button>
-          <button onClick={() => route("/visitor/remittance")}><img src="/assets/activities/remittance.jpg" alt="" loading="lazy" /><div><FileText /><span><b>الاستعلام عن الحوالات</b><small>عبر الموقع الرسمي للشبكة الموحدة</small></span><ChevronLeft /></div></button>
+      {appearance.announcement?.enabled && (
+        <div
+          className="announcement-banner-live"
+          style={{
+            background: "linear-gradient(135deg, var(--gold), #d7a83d)",
+            color: "var(--forest-dark)",
+            padding: "10px 16px",
+            borderRadius: "14px",
+            marginBottom: "14px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            fontWeight: 700,
+            fontSize: "13px",
+            cursor: appearance.announcement.link ? "pointer" : "default",
+            boxShadow: "0 4px 12px rgba(199,148,44,0.18)",
+          }}
+          onClick={() => {
+            if (appearance.announcement.link) route(appearance.announcement.link);
+          }}
+        >
+          <Megaphone style={{ width: 18, height: 18, flexShrink: 0 }} />
+          <span>{appearance.announcement.text}</span>
         </div>
-      </section>
+      )}
+
+      {appearance.sections
+        .filter((sec) => sec.visible)
+        .sort((a, b) => a.order - b.order)
+        .map((sec) => {
+          switch (sec.id) {
+            case "heroCarousel":
+              return <VisitorCarousel key="heroCarousel" />;
+            case "quickActivities":
+              return (
+                <section className="home-section" key="quickActivities">
+                  <SectionTitle title={sec.title || "جميع الأنشطة"} action={() => route("/visitor/stores")} />
+                  <div className="activity-grid">
+                    {homeActivities.map(({ id, name, path, Icon, image }) => (
+                      <button key={name} onClick={() => route(path)}>
+                        <div className="activity-image">
+                          <img src={activityImages[id] || image} alt={`صورة ${name}`} loading="lazy" onError={(event) => { event.currentTarget.src = image; }} />
+                          <Icon />
+                        </div>
+                        <span>{name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <Button kind="outline" className="all-activities" onClick={() => route("/visitor/stores")}>
+                    <Grid2X2 /> عرض جميع الأنشطة
+                  </Button>
+                </section>
+              );
+            case "exchangeRemittance":
+              return (
+                <section className="home-section" key="exchangeRemittance">
+                  <div className="financial-service-grid" style={{ marginTop: "10px" }}>
+                    <button onClick={() => route("/visitor/exchange-rates")}><img src="/assets/activities/exchange.jpg" alt="" loading="lazy" /><div><Landmark /><span><b>أسعار الصرف – جنوب اليمن</b><small>أسعار معتمدة من إدارة التطبيق</small></span><ChevronLeft /></div></button>
+                    <button onClick={() => route("/visitor/remittance")}><img src="/assets/activities/remittance.jpg" alt="" loading="lazy" /><div><FileText /><span><b>الاستعلام عن الحوالات</b><small>عبر الموقع الرسمي للشبكة الموحدة</small></span><ChevronLeft /></div></button>
+                  </div>
+                </section>
+              );
+            case "featuredStores":
+              return (
+                <section className="home-section" key="featuredStores">
+                  <SectionTitle title={sec.title || "المتاجر المعتمدة في يافع"} action={() => route("/visitor/stores")} />
+                  <div style={{ background: "white", padding: "14px 18px", borderRadius: "16px", border: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => route("/visitor/stores")}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <Store style={{ width: 24, height: 24, color: "var(--forest)" }} />
+                      <div>
+                        <strong style={{ fontSize: "13px", display: "block", color: "var(--forest)" }}>دليل المتاجر والمنشآت في يافع</strong>
+                        <small style={{ color: "var(--muted)", fontSize: "11px" }}>استعراض المتاجر المسجلة والمعتمدة حسب المديرية</small>
+                      </div>
+                    </div>
+                    <Button kind="outline" className="text-xs py-1 px-3">دخول المتاجر</Button>
+                  </div>
+                </section>
+              );
+            case "promotions":
+              return (
+                <section className="home-section" key="promotions">
+                  <SectionTitle title={sec.title || "أحدث العروض والخصومات"} action={() => route("/visitor/promotions")} />
+                  <div style={{ background: "linear-gradient(135deg, #fdfbf7, #f7f2e4)", border: "1px solid #ebd9b7", borderRadius: "16px", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => route("/visitor/promotions")}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "var(--gold)", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}><Gift style={{ width: 20 }} /></div>
+                      <div>
+                        <strong style={{ fontSize: "13px", display: "block", color: "var(--forest)" }}>عروض وبونصات متاجر يافع</strong>
+                        <small style={{ color: "var(--muted)", fontSize: "11px" }}>خصومات فورية وعروض حصرية لأبناء يافع</small>
+                      </div>
+                    </div>
+                    <Button kind="outline" className="text-xs py-1 px-3">استعراض العروض</Button>
+                  </div>
+                </section>
+              );
+            case "vehiclesRealEstate":
+              return (
+                <section className="home-section" key="vehiclesRealEstate">
+                  <SectionTitle title={sec.title || "سوق السيارات والعقارات وحراج المستعمل"} action={() => route("/visitor/vehicles")} />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginTop: "10px" }}>
+                    <button onClick={() => route("/visitor/dealers")} style={{ background: "white", padding: "12px 8px", borderRadius: "12px", border: "1px solid var(--line)", textAlign: "center" }}>
+                      <Car style={{ margin: "0 auto 4px", color: "var(--forest)", width: 22 }} />
+                      <span style={{ fontSize: "11px", fontWeight: 700, display: "block" }}>معارض السيارات</span>
+                    </button>
+                    <button onClick={() => route("/visitor/property")} style={{ background: "white", padding: "12px 8px", borderRadius: "12px", border: "1px solid var(--line)", textAlign: "center" }}>
+                      <Building2 style={{ margin: "0 auto 4px", color: "var(--forest)", width: 22 }} />
+                      <span style={{ fontSize: "11px", fontWeight: 700, display: "block" }}>عقارات يافع</span>
+                    </button>
+                    <button onClick={() => route("/visitor/used")} style={{ background: "white", padding: "12px 8px", borderRadius: "12px", border: "1px solid var(--line)", textAlign: "center" }}>
+                      <Package style={{ margin: "0 auto 4px", color: "var(--forest)", width: 22 }} />
+                      <span style={{ fontSize: "11px", fontWeight: 700, display: "block" }}>حراج المستعمل</span>
+                    </button>
+                  </div>
+                </section>
+              );
+            case "shareAndEarn":
+              return (
+                <section className="home-section" key="shareAndEarn">
+                  <div style={{ background: "linear-gradient(135deg, var(--forest), var(--forest-dark))", color: "white", borderRadius: "16px", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", boxShadow: "0 6px 18px rgba(6,75,61,0.18)" }} onClick={() => route("/visitor/share")}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <div style={{ width: "38px", height: "38px", borderRadius: "50%", background: "var(--gold)", color: "var(--forest-dark)", display: "flex", alignItems: "center", justifyContent: "center" }}><Gift style={{ width: 20 }} /></div>
+                      <div>
+                        <strong style={{ fontSize: "13px", display: "block", color: "white" }}>شارك واربح 1,000 ريال يمني</strong>
+                        <small style={{ color: "var(--gold-pale)", fontSize: "10px" }}>ادعُ منشأة جديدة في يافع واحصل على مكافأة فورية بعد اعتمادها</small>
+                      </div>
+                    </div>
+                    <ChevronLeft style={{ width: 18, color: "var(--gold)" }} />
+                  </div>
+                </section>
+              );
+            default:
+              return null;
+          }
+        })}
     </main>
     <VisitorBottom />
   </div>;
@@ -765,8 +952,9 @@ function ExchangeRatesPage() {
     setLoading(true);
     try {
       const res = await fetch("/api/exchange-rates");
-      const json = await res.json();
-      if (json.success && json.data) {
+      const ct = res.headers.get("content-type");
+      const json = res.ok && ct && ct.includes("application/json") ? await res.json() : null;
+      if (json && json.success && json.data) {
         setData(json.data);
         safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(json.data));
         toastMessage("تم تحديث أسعار الصرف بنجاح من المصدر المعتمد");
@@ -1563,6 +1751,7 @@ const adminMeta: Record<string, [string, string]> = {
   media: ["مكتبة صور المنصة", "رفع الصور والبنرات وترتيبها ونشرها وإيقافها"],
   "activity-images": ["صور الأنشطة التجارية", "تغيير صورة كل نشاط في الصفحة الرئيسية للزائر"],
   settlements: ["التسويات والتتبع المالي", "متابعة المبيعات وعمولة المنصة 0%"],
+  appearance: ["إدارة المظهر والمحتوى الحي", "تخصيص الألوان والسمات، الشعار، البنرات، وترتيب أقسام التطبيق دون إعادة بناء"],
 };
 
 function AdminBottomNav({ setRole }: { setRole?: (r: Role) => void }) {
@@ -2045,6 +2234,7 @@ function AdminGeneralPortal({ setRole }: { setRole: (r: Role) => void }) {
                   { name: "الموظفون والصلاحيات", path: "roles", Icon: ShieldCheck, tone: "amber" },
                   { name: "الشكاوى والبلاغات", path: "complaints", Icon: MessageCircle, tone: "emerald" },
                   { name: "النسخ الاحتياطي والأمان", path: "backup", Icon: ClipboardList, tone: "amber" },
+                  { name: "إدارة المظهر والمحتوى الحي", path: "appearance", Icon: Palette, tone: "emerald" },
                 ].map(({ name, path, Icon, tone }) => (
                   <div
                     key={path}
@@ -2775,14 +2965,15 @@ function ExchangeRateAdmin() {
         credentials: "include",
         body: JSON.stringify(payloadData),
       });
-      const json = await res.json();
-      if (res.ok && json.success) {
+      const ct = res.headers.get("content-type");
+      const json = ct && ct.includes("application/json") ? await res.json() : null;
+      if (res.ok && json && json.success) {
         setDataIfAvailable(json.data);
         safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(json.data));
         setHistory(json.data.history || []);
         toastMessage("تم اعتماد ونشر أسعار الصرف رسمياً لجميع المستخدمين بنجاح");
       } else {
-        toastMessage(json.error || "فشل نشر الأسعار في الخادم: غير مصرح");
+        toastMessage(json?.error || "فشل نشر الأسعار في الخادم: غير مصرح");
       }
     } catch {
       toastMessage("حدث خطأ في الاتصال بالخادم");
@@ -3323,7 +3514,32 @@ export default function App() {
     if (path === "/owner/orders") return <OwnerOrders setRole={setRole} />;
     if (path === "/owner/ads") return <OwnerAds setRole={setRole} />;
     if (path === "/owner/reports") return <OwnerReports setRole={setRole} />;
-    if (path === "/owner/preview") return <OwnerPreview />;
+    if (path === "/admin/appearance") {
+      return (
+        <div className="min-h-screen bg-[#f4f7f5] pb-24" dir="rtl">
+          <header className="bg-[#064b3d] text-white p-3.5 flex items-center justify-between sticky top-0 z-30 shadow-md">
+            <div className="flex items-center gap-2">
+              <Palette className="w-5 h-5 text-[#eedab0]" />
+              <div>
+                <h1 className="text-sm font-bold">إدارة المظهر والمحتوى الحي</h1>
+                <p className="text-[10px] text-emerald-200">تخصيص الألوان والهوية وترتيب الأقسام لحظياً</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white"
+              onClick={() => route("/admin/dashboard")}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </header>
+          <main className="max-w-4xl mx-auto p-3">
+            <AppearanceManager />
+          </main>
+          <AdminBottomNav setRole={setRole} />
+        </div>
+      );
+    }
     const adminType = path.match(/^\/admin\/([^/]+)$/)?.[1];
     if (adminType && adminMeta[adminType]) return <AdminPage type={adminType} setRole={setRole} />;
     return <main className="state-page" style={{ padding: "40px 20px", maxWidth: "480px", margin: "0 auto", textAlign: "center" }}>

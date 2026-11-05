@@ -5,9 +5,10 @@ import { useMemo, useState } from 'react'
 import {
   Activity, AlertTriangle, BadgePercent, BarChart3, Bell, Boxes, Building2, ChevronLeft, CircleDollarSign,
   ClipboardList, Crown, Download, FileSpreadsheet, FileText, Gift, Home, Image, KeyRound, LayoutGrid,
-  MapPin, Menu, Package, Plus, Search, Settings, ShieldCheck, ShoppingCart, Store, UserRound, UsersRound, X,
+  MapPin, Menu, Package, Palette, Plus, Search, Settings, ShieldCheck, ShoppingCart, Store, UserRound, UsersRound, X,
 } from 'lucide-react'
 import type { AdminSnapshot } from '@/lib/admin-data'
+import AppearanceManager from './AppearanceManager'
 
 const navigation = [
   ['الرئيسية', 'dashboard', Home],
@@ -17,6 +18,7 @@ const navigation = [
   ['إدارة الطلبات', 'orders', ShoppingCart],
   ['الإحصائيات الإدارية', 'analytics', BarChart3],
   ['الأدوار والصلاحيات', 'roles', ShieldCheck],
+  ['إدارة المظهر والمحتوى', 'appearance', Palette],
   ['صور التطبيق والإعلانات', 'media', Image],
   ['إدارة الإعلانات', 'ads', Bell],
   ['العروض والبونصات', 'promotions', Gift],
@@ -42,6 +44,7 @@ const pageInfo: Record<string, { title: string; subtitle: string; collection?: s
   payments: { title: 'إدارة العمولات والمدفوعات', subtitle: 'عمولة 3% للطلبات المكتملة فقط وإيصالات التحصيل', collection: 'payments', add: 'إضافة إيصال' },
   notifications: { title: 'إدارة الإشعارات', subtitle: 'إنشاء الإشعارات وجدولتها ومراجعة سجل الإرسال', collection: 'notifications', add: 'إنشاء إشعار' },
   settings: { title: 'إعدادات النظام', subtitle: 'العملات وأسعار الصرف والمحتوى والإعدادات العامة' },
+  appearance: { title: 'إدارة المظهر والمحتوى والتصميم', subtitle: 'تخصيص الألوان والشعارات والبنرات وإظهار وترتيب أقسام التطبيق حياً دون تحديث التطبيق' },
   backup: { title: 'النسخ الاحتياطي والأمان', subtitle: 'إدارة وتصدير النسخ الاحتياطية لقواعد البيانات وسجلات التدقيق وملفات الوسائط' },
   audit: { title: 'سجل التدقيق', subtitle: 'سجل خادمي غير قابل للتعديل للإجراءات الإدارية الحساسة', collection: 'audit-logs' },
 }
@@ -251,27 +254,31 @@ export default function AdminPortal({ snapshot }: { snapshot: AdminSnapshot }) {
             </div>
           )}
 
-          <article className="admin-panel admin-data-panel">
-            <div className="admin-panel-title">
-              <div><ClipboardList /><h2>{snapshot.section === 'dashboard' ? 'أحدث الأنشطة' : 'السجلات'}</h2></div>
-              <div className="admin-export-actions">
-                <button type="button" onClick={() => exportCSV(snapshot)}><FileSpreadsheet /> Excel / CSV</button>
-                <button type="button" onClick={() => window.print()}><Download /> تصدير PDF</button>
+          {snapshot.section === 'appearance' ? (
+            <AppearanceManager />
+          ) : (
+            <article className="admin-panel admin-data-panel">
+              <div className="admin-panel-title">
+                <div><ClipboardList /><h2>{snapshot.section === 'dashboard' ? 'أحدث الأنشطة' : 'السجلات'}</h2></div>
+                <div className="admin-export-actions">
+                  <button type="button" onClick={() => exportCSV(snapshot)}><FileSpreadsheet /> Excel / CSV</button>
+                  <button type="button" onClick={() => window.print()}><Download /> تصدير PDF</button>
+                </div>
               </div>
-            </div>
-            <div className="admin-table-tools">
-              <label><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="البحث في النتائج الحالية…" /></label>
-              <span>{rows.length} سجل</span>
-            </div>
-            {rows.length ? (
-              <div className="admin-table-scroll">
-                <table>
-                  <thead><tr><th>#</th><th>العنوان</th><th>التفاصيل</th><th>الحالة</th><th>آخر تحديث</th><th>الإجراء</th></tr></thead>
-                  <tbody>{rows.map((row, index) => <tr key={row.id}><td>{String(index + 1).padStart(2, '0')}</td><td><b>{row.title}</b><small>{row.id}</small></td><td>{row.detail}</td><td><span className="admin-status">{row.status}</span></td><td>{row.date}</td><td>{collection ? <Link href={`/admin/collections/${collection}/${row.id}`}>عرض وتعديل</Link> : '—'}</td></tr>)}</tbody>
-                </table>
+              <div className="admin-table-tools">
+                <label><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="البحث في النتائج الحالية…" /></label>
+                <span>{rows.length} سجل</span>
               </div>
-            ) : <EmptyState section={snapshot.section} />}
-          </article>
+              {rows.length ? (
+                <div className="admin-table-scroll">
+                  <table>
+                    <thead><tr><th>#</th><th>العنوان</th><th>التفاصيل</th><th>الحالة</th><th>آخر تحديث</th><th>الإجراء</th></tr></thead>
+                    <tbody>{rows.map((row, index) => <tr key={row.id}><td>{String(index + 1).padStart(2, '0')}</td><td><b>{row.title}</b><small>{row.id}</small></td><td>{row.detail}</td><td><span className="admin-status">{row.status}</span></td><td>{row.date}</td><td>{collection ? <Link href={`/admin/collections/${collection}/${row.id}`}>عرض وتعديل</Link> : '—'}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              ) : <EmptyState section={snapshot.section} />}
+            </article>
+          )}
 
           <div className="admin-security-note"><ShieldCheck /><div><b>الحماية والصلاحيات</b><p>جميع عمليات الإدارة الفعلية تمر عبر جلسة Payload والخادم. الإجراءات الحساسة تستفيد من تأكيد لوحة Payload وتُسجل في سجل التدقيق.</p></div></div>
           {snapshot.section === 'settings' && <div className="admin-warning"><ShieldCheck /><p>النسخ الاحتياطي والاستعادة الكاملة لقاعدة Figma Cloud غير مكشوفين كواجهة تطبيق حاليًا؛ لم نعرض زر استعادة وهميًا أو غير آمن.</p></div>}

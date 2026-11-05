@@ -1,0 +1,143 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'majdaltrki8@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // --- Admins Collection ---
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      
+      // User can create their own profile, but cannot self-assign role 'admin'
+      allow create: if isOwner(userId) 
+        && incoming().uid == request.auth.uid
+        && incoming().role in ['customer', 'owner']
+        && incoming().status in ['active', 'pending'];
+        
+      // User can update their own profile fields, but cannot modify their role or status
+      allow update: if (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status']))
+        || isAdmin();
+        
+      allow delete: if isAdmin();
+    }
+
+    // --- Establishments (Stores) Collection ---
+    match /establishments/{establishmentId} {
+      // Public visitors can browse approved and active stores
+      allow read: if true;
+      
+      // Store owners can register their establishment; initially approved must be false (pending admin review)
+      allow create: if isSignedIn() 
+        && isValidId(establishmentId)
+        && incoming().ownerId == request.auth.uid
+        && (incoming().approved == false || isAdmin());
+        
+      // Store owner can only update their own store; cannot change approved status or ownerId
+      allow update: if (isSignedIn() 
+          && existing().ownerId == request.auth.uid
+          && incoming().ownerId == existing().ownerId
+          && !incoming().diff(existing()).affectedKeys().hasAny(['approved', 'ownerId']))
+        || isAdmin();
+        
+      allow delete: if (isSignedIn() && existing().ownerId == request.auth.uid) || isAdmin();
+    }
+
+    // --- Products Collection ---
+    match /products/{productId} {
+      // Public visitors can view products in the marketplace
+      allow read: if true;
+      
+      // Only the owner of the establishment can add, update, or remove products
+      allow create: if isSignedIn()
+        && isValidId(productId)
+        && exists(/databases/$(database)/documents/establishments/$(incoming().establishmentId))
+        && (get(/databases/$(database)/documents/establishments/$(incoming().establishmentId)).data.ownerId == request.auth.uid || isAdmin());
+        
+      allow update: if isSignedIn()
+        && (get(/databases/$(database)/documents/establishments/$(existing().establishmentId)).data.ownerId == request.auth.uid || isAdmin());
+        
+      allow delete: if isSignedIn()
+        && (get(/databases/$(database)/documents/establishments/$(existing().establishmentId)).data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    // --- Orders Collection ---
+    match /orders/{orderId} {
+      // Customer who placed order or store owner receiving order can read
+      allow read: if isSignedIn() && (
+        resource.data.customerId == request.auth.uid ||
+        (exists(/databases/$(database)/documents/establishments/$(resource.data.establishmentId))
+          && get(/databases/$(database)/documents/establishments/$(resource.data.establishmentId)).data.ownerId == request.auth.uid) ||
+        isAdmin()
+      );
+      
+      // Customer can create an order with status 'pending'
+      allow create: if isSignedIn()
+        && isValidId(orderId)
+        && incoming().customerId == request.auth.uid
+        && incoming().status == 'pending';
+        
+      // Store owner or customer can update order status
+      allow update: if isSignedIn() && (
+        resource.data.customerId == request.auth.uid ||
+        (exists(/databases/$(database)/documents/establishments/$(resource.data.establishmentId))
+          && get(/databases/$(database)/documents/establishments/$(resource.data.establishmentId)).data.ownerId == request.auth.uid) ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+
+    // --- Advertisements Collection ---
+    match /advertisements/{adId} {
+      // Visitors can read active advertisements
+      allow read: if true;
+      // Only admin can create, update, or delete advertisements
+      allow write: if isAdmin();
+    }
+
+    // --- App Settings & Appearance Collection ---
+    match /settings/{settingId} {
+      // Visitors can read public appearance and app configuration
+      allow read: if true;
+      // Only admin can modify appearance and settings
+      allow write: if isAdmin();
+    }
+  }
+}

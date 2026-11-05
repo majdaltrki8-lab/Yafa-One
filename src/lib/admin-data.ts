@@ -37,6 +37,7 @@ const sectionCollections: Record<string, string> = {
   analytics: 'orders',
   reports: 'orders',
   settings: 'exchange-rates',
+  appearance: 'app-images',
 }
 
 function relationLabel(value: unknown) {

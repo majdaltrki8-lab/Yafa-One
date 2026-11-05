@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "updatedAt": "2026-11-05T08:40:26.330Z",
+  "colors": {
+    "forest": "#064b3d",
+    "forestDark": "#03372d",
+    "gold": "#c7942c",
+    "goldPale": "#f5ead0",
+    "cream": "#faf8f0",
+    "bgLight": "#f5f7f4"
+  },
+  "brand": {
+    "platformName": "يافع ون | Yafa One",
+    "platformTagline": "سوق يافع الإلكتروني الموحد - من الجبل إلى بيتك",
+    "logoText": "يافع ون",
+    "appIconUrl": "/icons/icon-512.png",
+    "welcomeBannerUrl": "/assets/carousel/welcome.jpg",
+    "scenicLandscapeUrl": "/assets/yafa-mountains.jpg"
+  },
+  "sections": [
+    {
+      "id": "heroCarousel",
+      "title": "شريط البانرات الإعلانية المتحرك",
+      "subtitle": "البنرات الرئيسية والعروض الدورية أعلى الصفحة",
+      "visible": true,
+      "order": 1
+    },
+    {
+      "id": "quickActivities",
+      "title": "دليل الأنشطة والخدمات التجارية",
+      "subtitle": "المطاعم، التموينات، مواد البناء، الصيدليات، والمزيد",
+      "visible": true,
+      "order": 2
+    },
+    {
+      "id": "exchangeRemittance",
+      "title": "خدمات الصرافة والشبكة الموحدة",
+      "subtitle": "أسعار الصرف المعتمدة والاستعلام عن الحوالات",
+      "visible": true,
+      "order": 3
+    },
+    {
+      "id": "featuredStores",
+      "title": "المتاجر والمنشآت المعتمدة في يافع",
+      "subtitle": "استعراض المنشآت النشطة حسب المديرية",
+      "visible": true,
+      "order": 4
+    },
+    {
+      "id": "promotions",
+      "title": "العروض والخصومات الخاصة",
+      "subtitle": "أحدث عروض المتاجر والمنتجات المخفضة",
+      "visible": true,
+      "order": 5
+    },
+    {
+      "id": "vehiclesRealEstate",
+      "title": "السيارات والعقارات وحراج المستعمل",
+      "subtitle": "سوق البيع والشراء المباشر بين أهالي يافع",
+      "visible": true,
+      "order": 6
+    },
+    {
+      "id": "shareAndEarn",
+      "title": "برنامج شارك واربح (الإحالات)",
+      "subtitle": "مكافآت دعوة المنشآت والمستخدمين",
+      "visible": true,
+      "order": 7
+    }
+  ],
+  "announcement": {
+    "enabled": true,
+    "text": "عروض وتخفيضات كبرى بمناسبة الافتتاح في مديريات يافع كافة",
+    "link": "/visitor/promotions",
+    "tone": "gold"
+  }
+}

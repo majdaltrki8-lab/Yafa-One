@@ -57,6 +57,7 @@ jobs:
 
       - name: Prepare Android & Brand Assets
         run: |
+          node scripts/build-standalone.mjs
           if [ ! -d android ]; then
             bunx cap add android
           fi

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">يافع ون</string>
+    <string name="title_activity_main">يافع ون</string>
+    <string name="package_name">com.yafaone.app</string>
+    <string name="custom_url_scheme">com.yafaone.app</string>
+</resources>

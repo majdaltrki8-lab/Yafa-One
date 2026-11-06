@@ -135,16 +135,6 @@ function LoadingFallback() {
 }
 
 export default function LegacyRoot() {
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  if (!mounted) {
-    return <LoadingFallback />
-  }
-
   return (
     <LegacyErrorBoundary>
       <LegacyApp />

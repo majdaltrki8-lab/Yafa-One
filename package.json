@@ -11,6 +11,9 @@
     "format": "oxfmt"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
     "@payloadcms/figma": "1.0.0-beta.1",
     "@payloadcms/next": "4.0.0-beta.3",
     "@payloadcms/plugin-cloud-storage": "4.0.0-beta.3",

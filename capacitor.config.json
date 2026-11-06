@@ -5,6 +5,16 @@
   "server": {
     "url": "https://ais-dev-wyfhgmprvy5tciy3ynscos-623825382652.europe-west1.run.app",
     "cleartext": true,
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*.run.app",
+      "*.europe-west1.run.app",
+      "ais-dev-wyfhgmprvy5tciy3ynscos-623825382652.europe-west1.run.app",
+      "ais-pre-wyfhgmprvy5tciy3ynscos-623825382652.europe-west1.run.app",
+      "*.firebaseapp.com",
+      "*.googleapis.com",
+      "*.web.app",
+      "localhost"
+    ]
   }
 }

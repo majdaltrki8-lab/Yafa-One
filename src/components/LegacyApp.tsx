@@ -590,34 +590,10 @@ function VisitorHome() {
       <label className="district-picker"><MapPin /><span>الموقع داخل يافع:</span><select value={district} onChange={(event) => changeDistrict(event.target.value)}>{yafaDistricts.map((name) => <option key={name}>{name}</option>)}</select></label>
     </header>
     <main className="page-content home-content">
-      {appearance.announcement?.enabled && (
-        <div
-          className="announcement-banner-live"
-          style={{
-            background: "linear-gradient(135deg, var(--gold), #d7a83d)",
-            color: "var(--forest-dark)",
-            padding: "10px 16px",
-            borderRadius: "14px",
-            marginBottom: "14px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            fontWeight: 700,
-            fontSize: "13px",
-            cursor: appearance.announcement.link ? "pointer" : "default",
-            boxShadow: "0 4px 12px rgba(199,148,44,0.18)",
-          }}
-          onClick={() => {
-            if (appearance.announcement.link) route(appearance.announcement.link);
-          }}
-        >
-          <Megaphone style={{ width: 18, height: 18, flexShrink: 0 }} />
-          <span>{appearance.announcement.text}</span>
-        </div>
-      )}
+      {/* Announcement banner removed per user instructions */}
 
       {appearance.sections
-        .filter((sec) => sec.visible)
+        .filter((sec) => sec.visible && sec.id !== "featuredStores" && sec.id !== "promotions" && sec.id !== "vehiclesRealEstate")
         .sort((a, b) => a.order - b.order)
         .map((sec) => {
           switch (sec.id) {
@@ -724,7 +700,6 @@ function VisitorHome() {
           }
         })}
     </main>
-    <VisitorBottom />
   </div>;
 }
 

@@ -120,7 +120,20 @@ async function generateAll() {
 `
   fs.writeFileSync(path.join(valuesDir, 'colors.xml'), colorsXml, 'utf-8')
 
-  // D. Clean up any leftover default template vector in drawable-v24
+  // Remove duplicate values/ic_launcher_background.xml to avoid mergeDebugResources conflict
+  const duplicateValuesBg = path.join(valuesDir, 'ic_launcher_background.xml')
+  if (fs.existsSync(duplicateValuesBg)) {
+    fs.unlinkSync(duplicateValuesBg)
+    console.log('Removed duplicate values/ic_launcher_background.xml to prevent resource collision with colors.xml')
+  }
+
+  // D. Clean up any leftover default template vectors in drawable
+  const duplicateDrawableBg = path.join(androidResDir, 'drawable', 'ic_launcher_background.xml')
+  if (fs.existsSync(duplicateDrawableBg)) {
+    fs.unlinkSync(duplicateDrawableBg)
+    console.log('Removed obsolete drawable/ic_launcher_background.xml')
+  }
+
   const v24Foreground = path.join(androidResDir, 'drawable-v24', 'ic_launcher_foreground.xml')
   if (fs.existsSync(v24Foreground)) {
     fs.unlinkSync(v24Foreground)

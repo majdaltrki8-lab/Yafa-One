@@ -1,8 +1,9 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.yafaone.app"
-    compileSdk = rootProject.ext.compileSdkVersion
+    namespace "com.yafaone.app"
+    compileSdk rootProject.ext.compileSdkVersion
+
     defaultConfig {
         applicationId "com.yafaone.app"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -10,14 +11,31 @@ android {
         versionCode 9
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("KEYSTORE_FILE")
+            def storePass = System.getenv("KEYSTORE_PASSWORD")
+            def aliasName = System.getenv("KEY_ALIAS")
+            def keyPass = System.getenv("KEY_PASSWORD")
+
+            if (keystorePath && storePass && aliasName && keyPass) {
+                storeFile file(keystorePath)
+                storePassword storePass
+                keyAlias aliasName
+                keyPassword keyPass
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -25,7 +43,7 @@ android {
 }
 
 repositories {
-    flatDir{
+    flatDir {
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
 }
@@ -49,6 +67,6 @@ try {
     if (servicesJSON.text) {
         apply plugin: 'com.google.gms.google-services'
     }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+} catch (Exception ex) {
+    logger.info("google-services.json not found, Google Services plugin not applied.")
 }

@@ -1,21 +1,18 @@
-name: Build Yafa One Android APK & AAB
 
+name: Build Yafa One Android APK & AAB
 on:
   push:
     branches:
       - main
       - master
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   build-android:
     name: Build Yafa One Android
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -70,14 +67,18 @@ jobs:
         run: |
           test -f android/gradlew
           test -d android/app
-          test -f android/settings.gradle || \
-            test -f android/settings.gradle.kts
+          test -f android/settings.gradle || test -f android/settings.gradle.kts
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Verify Debug APK
+        run: |
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          echo "Debug APK created"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -109,13 +110,15 @@ jobs:
           test -s android/app/release-key.jks
 
       - name: Build Signed Release AAB
-        env:KEYSTORE_FILE: ${{ github.workspace }}/android/app/release-key.jks
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/android/app/release-key.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          test -s "$KEYSTORE_FILE"
           cd android
-          ./gradlew bundleRelease --no-daemon --stacktrace
+          ./gradlew :app:bundleRelease --no-daemon --stacktrace
 
       - name: Verify Release AAB
         run: |

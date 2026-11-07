@@ -109,7 +109,7 @@ jobs:
           test -s android/app/release-key.jks
 
       - name: Build Signed Release AAB
-        env:
+        env:KEYSTORE_FILE: ${{ github.workspace }}/android/app/release-key.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}

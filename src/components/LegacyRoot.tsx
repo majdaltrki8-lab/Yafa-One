@@ -13,6 +13,16 @@ interface ErrorBoundaryState {
   errorMessage: string
 }
 
+function navigateSafely(path: string) {
+  if (typeof window === 'undefined') return
+  try {
+    window.history.pushState({}, '', path)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  } catch {
+    window.location.hash = path
+  }
+}
+
 class LegacyErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props)
@@ -33,9 +43,9 @@ class LegacyErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
   render() {
     if (this.state.hasError) {
       return (
-        <main className="state-page" dir="rtl">
+        <main className="state-page" dir="rtl" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
           <AlertTriangle style={{ width: 54, height: 54, color: '#c7942c', marginBottom: 12 }} />
-          <h1>تعذر تحميل بيانات التطبيق</h1>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#064b3d' }}>تعذر تحميل بيانات التطبيق</h1>
           <p style={{ maxWidth: 450, color: '#52605b', lineHeight: 1.7, margin: '8px auto 20px' }}>
             {this.state.errorMessage || 'حدث خطأ أثناء الاتصال بالنظام أو معالجة البيانات.'}
           </p>
@@ -45,7 +55,7 @@ class LegacyErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
               type="button"
               onClick={() => {
                 this.setState({ hasError: false, errorMessage: '' })
-                if (typeof window !== 'undefined') window.location.reload()
+                navigateSafely('/visitor/home')
               }}
             >
               <RefreshCw style={{ width: 18, height: 18 }} /> إعادة المحاولة
@@ -53,9 +63,7 @@ class LegacyErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
             <button
               className="btn btn-outline"
               type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') window.location.href = '/visitor/home'
-              }}
+              onClick={() => navigateSafely('/visitor/home')}
             >
               <Home style={{ width: 18, height: 18 }} /> بوابة الزائر
             </button>
@@ -77,22 +85,20 @@ function LoadingFallback() {
   }, [])
 
   return (
-    <main className="state-page" dir="rtl">
+    <main className="state-page" dir="rtl" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
       <span className="spinner dark" />
-      <h1>يافع ون</h1>
+      <h1 style={{ fontSize: 20, fontWeight: 700, margin: '12px 0 6px', color: '#064b3d' }}>يافع ون</h1>
       <p style={{ color: '#52605b' }}>جارٍ تحميل البيانات...</p>
       {tookLong && (
         <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, maxWidth: 420 }}>
           <small style={{ color: '#88948f', fontSize: '12px', textAlign: 'center', lineHeight: 1.6 }}>
-            استغرق الاتصال بقاعدة البيانات وقتاً أطول من المعتاد في بيئة المعاينة. يمكنك الانتقال المباشر للبوابات:
+            استغرق الاتصال بقاعدة البيانات وقتاً أطول من المعتاد. يمكنك الانتقال المباشر للبوابات:
           </small>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
             <button
               className="btn btn-primary"
               type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') window.location.href = '/visitor/home'
-              }}
+              onClick={() => navigateSafely('/visitor/home')}
               style={{ minHeight: 36, padding: '6px 12px', fontSize: '12px' }}
             >
               <Home style={{ width: 14, height: 14 }} /> بوابة الزائر
@@ -100,9 +106,7 @@ function LoadingFallback() {
             <button
               className="btn btn-outline"
               type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') window.location.href = '/auth/owner-login'
-              }}
+              onClick={() => navigateSafely('/auth/owner-login')}
               style={{ minHeight: 36, padding: '6px 12px', fontSize: '12px' }}
             >
               <Store style={{ width: 14, height: 14 }} /> صاحب المنشأة
@@ -110,22 +114,10 @@ function LoadingFallback() {
             <button
               className="btn btn-outline"
               type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') window.location.href = '/management/dashboard'
-              }}
+              onClick={() => navigateSafely('/admin/dashboard')}
               style={{ minHeight: 36, padding: '6px 12px', fontSize: '12px' }}
             >
-              <KeyRound style={{ width: 14, height: 14 }} /> بوابة الإدارة
-            </button>
-            <button
-              className="btn btn-outline"
-              type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') window.location.reload()
-              }}
-              style={{ minHeight: 36, padding: '6px 12px', fontSize: '12px' }}
-            >
-              <RefreshCw style={{ width: 14, height: 14 }} /> إعادة تحميل
+              <KeyRound style={{ width: 14, height: 14 }} /> لوحة الإدارة
             </button>
           </div>
         </div>

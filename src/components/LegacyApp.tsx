@@ -10,6 +10,9 @@ import {
   UserRound, UsersRound, Utensils, Wifi, WifiOff, Wrench, X, Palette
 } from "lucide-react";
 import AppearanceManager from "@/components/admin/AppearanceManager";
+import { db, storage } from "@/lib/firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   getLocalAppearance,
   applyAppearanceToDOM,
@@ -34,8 +37,12 @@ function useAppAppearance() {
 
     window.addEventListener(APPEARANCE_EVENT_NAME, onUpdate);
 
-    fetch("/api/appearance")
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 2500);
+
+    fetch("/api/appearance", { signal: ctrl.signal })
       .then((res) => {
+        clearTimeout(timeout);
         if (!res.ok) return null;
         const ct = res.headers.get("content-type");
         if (ct && ct.includes("application/json")) return res.json();
@@ -47,7 +54,9 @@ function useAppAppearance() {
           applyAppearanceToDOM(data.appearance);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        clearTimeout(timeout);
+      });
 
     return () => window.removeEventListener(APPEARANCE_EVENT_NAME, onUpdate);
   }, []);
@@ -303,20 +312,84 @@ function loadExchangeRates(): ExchangeRateData {
   }
 }
 
+export function normalizeAppPath(raw: string): string {
+  if (!raw) return "/";
+  let clean = raw.trim();
+
+  try {
+    if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("capacitor://")) {
+      const u = new URL(clean);
+      clean = u.pathname + u.search + u.hash;
+    }
+  } catch {}
+
+  if (clean.includes("#")) {
+    const hashPart = clean.substring(clean.indexOf("#") + 1);
+    if (hashPart.startsWith("/")) {
+      clean = hashPart;
+    }
+  }
+
+  const qIdx = clean.indexOf("?");
+  let pathPart = qIdx !== -1 ? clean.substring(0, qIdx) : clean;
+
+  if (pathPart === "/index.html" || pathPart === "index.html" || pathPart === "") {
+    pathPart = "/";
+  }
+
+  if (!pathPart.startsWith("/")) {
+    pathPart = "/" + pathPart;
+  }
+
+  pathPart = pathPart.replace(/\/+/g, "/");
+
+  if (pathPart.length > 1 && pathPart.endsWith("/")) {
+    pathPart = pathPart.slice(0, -1);
+  }
+
+  return pathPart;
+}
+
 const route = (path: string) => {
   if (typeof window === "undefined") return;
-  window.history.pushState({}, "", path);
+  if (!path) return;
+
+  if (
+    path.startsWith("tel:") ||
+    path.startsWith("mailto:") ||
+    path.startsWith("whatsapp:") ||
+    path.startsWith("https://wa.me") ||
+    path.startsWith("http://") ||
+    path.startsWith("https://")
+  ) {
+    try {
+      window.open(path, "_blank");
+    } catch {
+      window.location.href = path;
+    }
+    return;
+  }
+
+  const clean = normalizeAppPath(path);
+  const qIdx = path.indexOf("?");
+  const target = qIdx !== -1 ? clean + path.substring(qIdx) : clean;
+
+  try {
+    window.history.pushState({}, "", target);
+  } catch {
+    window.location.hash = target;
+  }
   window.dispatchEvent(new PopStateEvent("popstate"));
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
 const toastMessage = (message: string) => window.dispatchEvent(new CustomEvent("yafa-toast", { detail: message }));
 
-function Button({ children, onClick, kind = "primary", type = "button", disabled = false, className = "" }: {
+function Button({ children, onClick, kind = "primary", type = "button", disabled = false, className = "", style }: {
   children: React.ReactNode; onClick?: () => void; kind?: "primary" | "gold" | "outline" | "ghost" | "danger";
-  type?: "button" | "submit"; disabled?: boolean; className?: string;
+  type?: "button" | "submit"; disabled?: boolean; className?: string; style?: React.CSSProperties;
 }) {
-  return <button className={`btn btn-${kind} ${className}`} onClick={onClick} type={type} disabled={disabled}>{children}</button>;
+  return <button style={style} className={`btn btn-${kind} ${className}`} onClick={onClick} type={type} disabled={disabled}>{children}</button>;
 }
 
 function Brand({ compact = false, portal }: { compact?: boolean; portal?: "visitor" | "owner" | "admin" }) {
@@ -892,20 +965,443 @@ function VisitorCategory({ type }: { type: string }) {
   </VisitorShell>;
 }
 
-function VisitorDetail({ kind }: { kind: "store" | "product" }) {
+function VisitorDetail({ kind, currentPath }: { kind: "store" | "product"; currentPath?: string }) {
   const [count, setCount] = useState(1);
-  return <VisitorShell><TopBar back="/visitor/home" />
-    <div className="detail-hero"><img src={kind === "store" ? market : storeImage} alt="" /></div>
-    <div className="detail-card"><span className="badge">موثق</span><h1>{kind === "store" ? "سوق القمة" : "عسل يافع الطبيعي"}</h1><p><MapPin /> يافع · لبعوس</p><p>وصف تجريبي للمعاينة فقط. لا تمثل هذه البيانات سجلاً تجارياً حقيقياً.</p>
-      {kind === "product" && <><h2>3,500 ر.ي</h2><div className="quantity"><button onClick={() => setCount(Math.max(1, count - 1))}>−</button><b>{count}</b><button onClick={() => setCount(count + 1)}>+</button></div></>}
-      <div className="card-actions"><Button kind="outline" onClick={() => toastMessage("أضيف إلى المفضلة")}><Heart /> مفضلة</Button><Button kind="gold" onClick={() => kind === "product" ? route("/visitor/cart") : toastMessage("تم فتح التواصل التجريبي")}><ShoppingCart /> {kind === "product" ? "أضف إلى السلة" : "تواصل"}</Button></div>
-    </div>
-  </VisitorShell>;
+  const activePath = currentPath || (typeof window !== "undefined" ? window.location.pathname : "");
+  const param = activePath.split("/").pop() || "1";
+
+  const ownerProds = loadOwnerProducts();
+  const catalogProducts = [
+    { id: 1, name: "عسل يافع السدر الطبيعي الدوعني الفاخر", price: 3500, formattedPrice: "3,500 ر.ي", image: market, storeName: "سوق القمة التجاري", category: "منتجات محلية", stock: 12, storeId: 1, desc: "عسل سدر طبيعي 100% مستخرج من مناحل أودية يافع الشامخة، غني بالفوائد الصحية ومضمون الجودة." },
+    { id: 2, name: "قهوة بن يافع الأصيلة (محمصة درجة أولى)", price: 4800, formattedPrice: "4,800 ر.ي", image: storeImage, storeName: "سوق القمة التجاري", category: "بن وبهارات", stock: 25, storeId: 1, desc: "بن يافعي أصيل من مزارع يافع التاريخية، محمص بعناية ونكهة تراثية فاخرة تعبق بالأصالة." },
+    { id: 3, name: "هاتف ذكي حديث يدعم شبكات الجيل الخامس", price: 425000, formattedPrice: "425,000 ر.ي", image: carImage, storeName: "متجر يافع للتقنية", category: "إلكترونيات", stock: 6, storeId: 2, desc: "أحدث إصدارات الهواتف الذكية مع شاشة أموليد وبطارية تدوم طويلاً، مع ضمان محلي معتمد." },
+    { id: 4, name: "مكسرات وبهارات يافعية مشكلة فاخرة", price: 12000, formattedPrice: "12,000 ر.ي", image: market, storeName: "سوق القمة التجاري", category: "أغذية ومونة", stock: 18, storeId: 1, desc: "تشكيلة مختارة من أجود أنواع المكسرات والبهارات الطازجة، معبأة بعناية ومناسبة لجميع المناسبات." },
+    ...ownerProds.map((op) => ({
+      id: op.id,
+      name: op.name,
+      price: op.price,
+      formattedPrice: `${op.price.toLocaleString()} ${op.currency}`,
+      image: op.images[0] || market,
+      storeName: safeStorage.getItem("yafa-draft-est-name") || "متجري في يافع",
+      category: op.mainCategory,
+      stock: op.stock || 10,
+      storeId: 99,
+      desc: op.description || "منتج عالي الجودة معتمد ومتاح للطلب الفوري في منصة يافع ون.",
+    })),
+  ];
+
+  let store: any = homePreviewStores.find((s) => s.id.toString() === param || s.name.includes(param));
+  if (!store) {
+    if (param === "souq-alqimma" || param === "1") {
+      store = homePreviewStores[0];
+    } else {
+      const ownerEstName = safeStorage.getItem("yafa-draft-est-name");
+      if (ownerEstName && (param === "my-store" || param === "draft" || param === "99")) {
+        store = {
+          id: 99,
+          name: ownerEstName,
+          district: "لبعوس",
+          activity: "منشأة تجارية",
+          image: market,
+          approved: true,
+          active: true,
+        };
+      } else {
+        const num = parseInt(param, 10);
+        store = (!isNaN(num) && num >= 1 && num <= homePreviewStores.length) ? homePreviewStores[num - 1] : homePreviewStores[0];
+      }
+    }
+  }
+
+  let product = catalogProducts.find((p) => p.id.toString() === param);
+  if (!product) {
+    const num = parseInt(param, 10);
+    product = (!isNaN(num) && num >= 1 && num <= catalogProducts.length) ? catalogProducts[num - 1] : catalogProducts[0];
+  }
+
+  const [isStoreFav, setIsStoreFav] = useState(() => {
+    try {
+      const favs = JSON.parse(safeStorage.getItem("yafa-favorites") || "[]") as number[];
+      return favs.includes(store.id);
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleStoreFav = () => {
+    const next = !isStoreFav;
+    setIsStoreFav(next);
+    let favs: number[] = [];
+    try { favs = JSON.parse(safeStorage.getItem("yafa-favorites") || "[]") as number[]; } catch {}
+    const updated = next ? [...new Set([...favs, store.id])] : favs.filter((id) => id !== store.id);
+    safeStorage.setItem("yafa-favorites", JSON.stringify(updated));
+    toastMessage(next ? "أضيف المتجر إلى المفضلة" : "أزيل المتجر من المفضلة");
+  };
+
+  const [isProdFav, setIsProdFav] = useState(() => {
+    try {
+      const favs = JSON.parse(safeStorage.getItem("yafa-favorite-products") || "[]") as number[];
+      return favs.includes(product.id);
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleProdFav = () => {
+    const next = !isProdFav;
+    setIsProdFav(next);
+    let favs: number[] = [];
+    try { favs = JSON.parse(safeStorage.getItem("yafa-favorite-products") || "[]") as number[]; } catch {}
+    const updated = next ? [...new Set([...favs, product.id])] : favs.filter((id) => id !== product.id);
+    safeStorage.setItem("yafa-favorite-products", JSON.stringify(updated));
+    toastMessage(next ? "أضيف المنتج إلى المفضلة" : "أزيل المنتج من المفضلة");
+  };
+
+  const handleAddToCart = () => {
+    try {
+      let cart: any[] = JSON.parse(safeStorage.getItem("yafa-cart") || "[]");
+      const existing = cart.find((item) => item.id === product.id);
+      if (existing) {
+        existing.quantity += count;
+      } else {
+        cart.push({
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          formattedPrice: product.formattedPrice,
+          image: product.image,
+          quantity: count,
+          storeName: product.storeName,
+        });
+      }
+      safeStorage.setItem("yafa-cart", JSON.stringify(cart));
+      toastMessage(`تمت إضافة ${count} من "${product.name}" إلى السلة`);
+      route("/visitor/cart");
+    } catch {
+      toastMessage("تمت الإضافة إلى السلة");
+    }
+  };
+
+  if (kind === "store") {
+    const storeProds = catalogProducts.filter((p) => p.storeId === store.id || p.storeName === store.name);
+    return (
+      <VisitorShell>
+        <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <button
+            onClick={() => route("/visitor/home")}
+            style={{ background: "none", border: "none", color: "#064b3d", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontWeight: 700, fontSize: 13 }}
+          >
+            <ChevronLeft style={{ transform: "rotate(180deg)", width: 16, height: 16 }} /> العودة للرئيسية
+          </button>
+          <span style={{ fontSize: 12, color: "#666" }}>{store.district} · يافع</span>
+        </div>
+        <div className="detail-hero">
+          <img src={store.image} alt={store.name} />
+        </div>
+        <div className="detail-card">
+          <span className="badge">منشأة موثقة</span>
+          <h1>{store.name}</h1>
+          <p><MapPin /> يافع · {store.district} · {store.activity}</p>
+          <p>متجر معتمد ومسجل في منصة يافع ون التجارية لتقديم أفضل المنتجات والخدمات لسكان يافع وزوارها.</p>
+          <div className="card-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+            <Button kind={isStoreFav ? "gold" : "outline"} onClick={toggleStoreFav}>
+              <Heart style={{ fill: isStoreFav ? "#064b3d" : "none" }} /> {isStoreFav ? "في المفضلة" : "مفضلة"}
+            </Button>
+            <Button kind="outline" onClick={() => route(`https://wa.me/967770000000?text=${encodeURIComponent(`السلام عليكم، أتواصل معكم عبر منصة يافع ون بخصوص متجركم: ${store.name}`)}`)}>
+              <MessageCircle /> واتساب
+            </Button>
+            <Button kind="gold" onClick={() => route("tel:770000000")}>
+              <Store /> اتصال
+            </Button>
+          </div>
+        </div>
+
+        <section style={{ padding: "0 16px 20px" }}>
+          <SectionTitle title="منتجات وعروض المتجر" />
+          <div className="product-grid">
+            {(storeProds.length ? storeProds : catalogProducts.slice(0, 2)).map((p) => (
+              <article className="product-card" key={p.id}>
+                <img src={p.image} alt={p.name} />
+                <h3>{p.name}</h3>
+                <strong>{p.formattedPrice}</strong>
+                <Button kind="gold" onClick={() => route(`/visitor/product/${p.id}`)}>
+                  عرض التفاصيل
+                </Button>
+              </article>
+            ))}
+          </div>
+        </section>
+      </VisitorShell>
+    );
+  }
+
+  return (
+    <VisitorShell>
+      <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button
+          onClick={() => route("/visitor/home")}
+          style={{ background: "none", border: "none", color: "#064b3d", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontWeight: 700, fontSize: 13 }}
+        >
+          <ChevronLeft style={{ transform: "rotate(180deg)", width: 16, height: 16 }} /> العودة للرئيسية
+        </button>
+        <span style={{ fontSize: 12, color: "#064b3d", fontWeight: 600 }}>{product.storeName}</span>
+      </div>
+      <div className="detail-hero">
+        <img src={product.image} alt={product.name} />
+      </div>
+      <div className="detail-card">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span className="badge">منتج موثق</span>
+          <span style={{ fontSize: 11, background: "#e8f5e9", color: "#2e7d32", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>
+            متوفر ({product.stock} قطع)
+          </span>
+        </div>
+        <h1>{product.name}</h1>
+        <p><MapPin /> متوفر لدى: {product.storeName} · يافع</p>
+        <p style={{ color: "#52605b", lineHeight: 1.6 }}>{product.desc}</p>
+        <h2>{product.formattedPrice}</h2>
+        <div className="quantity">
+          <button type="button" onClick={() => setCount(Math.max(1, count - 1))}>−</button>
+          <b>{count}</b>
+          <button type="button" onClick={() => setCount(Math.min(product.stock, count + 1))}>+</button>
+        </div>
+        <div className="card-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+          <Button kind={isProdFav ? "gold" : "outline"} onClick={toggleProdFav}>
+            <Heart style={{ fill: isProdFav ? "#064b3d" : "none" }} /> {isProdFav ? "في المفضلة" : "مفضلة"}
+          </Button>
+          <Button kind="gold" onClick={handleAddToCart}>
+            <ShoppingCart /> أضف إلى السلة
+          </Button>
+          <Button kind="outline" onClick={() => route(`https://wa.me/967770000000?text=${encodeURIComponent(`السلام عليكم، أرغب في طلب ${count} من منتج: ${product.name} بسعر ${product.formattedPrice} عبر تطبيق يافع ون.`)}`)}>
+            <MessageCircle /> طلب عبر واتساب
+          </Button>
+        </div>
+      </div>
+    </VisitorShell>
+  );
 }
 
 function CartLike({ type }: { type: "cart" | "orders" | "favorites" }) {
-  const title = type === "cart" ? "سلة التسوق" : type === "orders" ? "طلباتي" : "المفضلة";
-  return <VisitorShell><ScenicHero title={title} subtitle="حالة محلية تجريبية للمعاينة" /><div className="list-card"><img src={market} alt="" /><div><h3>عسل يافع الطبيعي</h3><p>الكمية: 1 · 3,500 ر.ي</p></div>{type === "cart" && <button className="icon-button danger" onClick={() => toastMessage("تم الحذف من السلة")}><Trash2 /></button>}</div>{type === "cart" && <div className="checkout-card"><p>الإجمالي <b>3,500 ر.ي</b></p><Button onClick={() => toastMessage("نجاح: تم إنشاء طلب تجريبي — دون دفع حقيقي")}>إتمام الطلب</Button></div>}</VisitorShell>;
+  const [, setTick] = useState(0);
+  const refresh = () => setTick((t) => t + 1);
+
+  if (type === "favorites") {
+    let savedStoreIds: number[] = [];
+    let savedProdIds: number[] = [];
+    try { savedStoreIds = JSON.parse(safeStorage.getItem("yafa-favorites") || "[]"); } catch {}
+    try { savedProdIds = JSON.parse(safeStorage.getItem("yafa-favorite-products") || "[]"); } catch {}
+
+    const favStores = homePreviewStores.filter((s) => savedStoreIds.includes(s.id));
+    const favProducts = products.map((p, idx) => ({ ...p, id: idx + 1 })).filter((p) => savedProdIds.includes(p.id));
+
+    const removeStore = (id: number) => {
+      const next = savedStoreIds.filter((x) => x !== id);
+      safeStorage.setItem("yafa-favorites", JSON.stringify(next));
+      toastMessage("أزيل المتجر من المفضلة");
+      refresh();
+    };
+
+    const removeProduct = (id: number) => {
+      const next = savedProdIds.filter((x) => x !== id);
+      safeStorage.setItem("yafa-favorite-products", JSON.stringify(next));
+      toastMessage("أزيل المنتج من المفضلة");
+      refresh();
+    };
+
+    const isEmpty = favStores.length === 0 && favProducts.length === 0;
+
+    return (
+      <VisitorShell>
+        <ScenicHero title="المفضلة" subtitle="متاجرك ومنتجاتك المفضلة للوصول السريع" icon={<Heart />} />
+        {isEmpty ? (
+          <div className="panel" style={{ textAlign: "center", padding: "40px 16px" }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(6, 75, 61, 0.08)", color: "#064b3d", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <Heart style={{ width: 32, height: 32 }} />
+            </div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>قائمة المفضلة فارغة</h3>
+            <p style={{ color: "#666", fontSize: 14, lineHeight: 1.6, maxWidth: 360, margin: "0 auto 20px" }}>
+              لم تقم بإضافة أي متاجر أو منتجات إلى مفضلتك بعد. تصفح سوق يافع وأضف ما يعجبك لتصل إليه بنقرة واحدة.
+            </p>
+            <Button kind="gold" onClick={() => route("/visitor/home")}>تصفح المتاجر والمنتجات</Button>
+          </div>
+        ) : (
+          <div style={{ padding: "16px 12px" }}>
+            {favStores.length > 0 && (
+              <section style={{ marginBottom: 24 }}>
+                <SectionTitle title="المتاجر المفضلة" />
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {favStores.map((s) => (
+                    <div key={s.id} className="list-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <img src={s.image} alt={s.name} style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover" }} />
+                        <div>
+                          <h3 style={{ fontSize: 15, margin: "0 0 4px" }}>{s.name}</h3>
+                          <p style={{ margin: 0, fontSize: 12, color: "#666" }}><MapPin style={{ width: 12, height: 12, display: "inline" }} /> {s.district} · {s.activity}</p>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Button kind="gold" onClick={() => route(`/visitor/store/${s.id}`)}>زيارة المتجر</Button>
+                        <button className="icon-button danger" onClick={() => removeStore(s.id)} title="حذف من المفضلة"><Trash2 /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {favProducts.length > 0 && (
+              <section>
+                <SectionTitle title="المنتجات المفضلة" />
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {favProducts.map((p) => (
+                    <div key={p.id} className="list-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <img src={p.image} alt={p.name} style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover" }} />
+                        <div>
+                          <h3 style={{ fontSize: 15, margin: "0 0 4px" }}>{p.name}</h3>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#064b3d" }}>{p.price}</p>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Button kind="gold" onClick={() => route(`/visitor/product/${p.id}`)}>عرض التفاصيل</Button>
+                        <button className="icon-button danger" onClick={() => removeProduct(p.id)} title="حذف من المفضلة"><Trash2 /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+      </VisitorShell>
+    );
+  }
+
+  if (type === "cart") {
+    let cart: any[] = [];
+    try { cart = JSON.parse(safeStorage.getItem("yafa-cart") || "[]"); } catch {}
+
+    const removeFromCart = (id: number) => {
+      const updated = cart.filter((item) => item.id !== id);
+      safeStorage.setItem("yafa-cart", JSON.stringify(updated));
+      toastMessage("تم الحذف من السلة");
+      refresh();
+    };
+
+    const updateQuantity = (id: number, delta: number) => {
+      const item = cart.find((i) => i.id === id);
+      if (item) {
+        item.quantity = Math.max(1, item.quantity + delta);
+        safeStorage.setItem("yafa-cart", JSON.stringify(cart));
+        refresh();
+      }
+    };
+
+    const total = cart.reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1), 0);
+
+    const handleCheckout = () => {
+      if (!cart.length) return;
+      const order = {
+        id: `ORD-${Date.now().toString().slice(-5)}`,
+        items: [...cart],
+        total,
+        date: new Intl.DateTimeFormat("ar-YE", { dateStyle: "medium" }).format(new Date()),
+        status: "قيد المراجعة والتجهيز",
+      };
+      let orders: any[] = [];
+      try { orders = JSON.parse(safeStorage.getItem("yafa-orders") || "[]"); } catch {}
+      safeStorage.setItem("yafa-orders", JSON.stringify([order, ...orders]));
+      safeStorage.setItem("yafa-cart", "[]");
+      toastMessage(`تم تسجيل طلبك رقم (${order.id}) بنجاح!`);
+      route("/visitor/orders");
+    };
+
+    return (
+      <VisitorShell>
+        <ScenicHero title="سلة التسوق" subtitle="مراجعة المنتجات وإتمام الطلب" icon={<ShoppingCart />} />
+        {!cart.length ? (
+          <div className="panel" style={{ textAlign: "center", padding: "40px 16px" }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(6, 75, 61, 0.08)", color: "#064b3d", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <ShoppingCart style={{ width: 32, height: 32 }} />
+            </div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>سلة التسوق فارغة</h3>
+            <p style={{ color: "#666", fontSize: 14, margin: "0 auto 20px" }}>أضف منتجات من متاجر يافع لإتمام طلبك.</p>
+            <Button kind="gold" onClick={() => route("/visitor/home")}>تسوق الآن</Button>
+          </div>
+        ) : (
+          <div style={{ padding: "16px 12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {cart.map((item) => (
+                <div key={item.id} className="list-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <img src={item.image} alt={item.name} style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover" }} />
+                    <div>
+                      <h3 style={{ fontSize: 15, margin: "0 0 4px" }}>{item.name}</h3>
+                      <p style={{ margin: 0, fontSize: 12, color: "#666" }}>
+                        السعر: {item.formattedPrice || `${item.price.toLocaleString()} ر.ي`}
+                      </p>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                        <button onClick={() => updateQuantity(item.id, -1)} style={{ width: 24, height: 24, borderRadius: 4, border: "1px solid #ccc", background: "#f5f5f5", cursor: "pointer" }}>−</button>
+                        <span style={{ fontWeight: "bold", fontSize: 13 }}>{item.quantity}</span>
+                        <button onClick={() => updateQuantity(item.id, 1)} style={{ width: 24, height: 24, borderRadius: 4, border: "1px solid #ccc", background: "#f5f5f5", cursor: "pointer" }}>+</button>
+                      </div>
+                    </div>
+                  </div>
+                  <button className="icon-button danger" onClick={() => removeFromCart(item.id)} title="حذف من السلة">
+                    <Trash2 />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="checkout-card" style={{ marginTop: 20, padding: 16, background: "white", borderRadius: 12, border: "1px solid #e0e0e0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 16 }}>
+                <span>إجمالي الطلب التقريبي:</span>
+                <b style={{ color: "#064b3d" }}>{total.toLocaleString()} ر.ي</b>
+              </div>
+              <Button kind="gold" onClick={handleCheckout} style={{ width: "100%" }}>
+                إتمام الطلب التجريبي
+              </Button>
+            </div>
+          </div>
+        )}
+      </VisitorShell>
+    );
+  }
+
+  let orders: any[] = [];
+  try { orders = JSON.parse(safeStorage.getItem("yafa-orders") || "[]"); } catch {}
+
+  return (
+    <VisitorShell>
+      <ScenicHero title="طلباتي" subtitle="سجل الطلبات السابقة وحالتها" icon={<Package />} />
+      {!orders.length ? (
+        <div className="panel" style={{ textAlign: "center", padding: "40px 16px" }}>
+          <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(6, 75, 61, 0.08)", color: "#064b3d", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <Package style={{ width: 32, height: 32 }} />
+          </div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px" }}>لا توجد طلبات سابقة</h3>
+          <p style={{ color: "#666", fontSize: 14, margin: "0 auto 20px" }}>يمكنك تصفح متاجر يافع وإتمام أول طلب لك الآن.</p>
+          <Button kind="gold" onClick={() => route("/visitor/home")}>تصفح المتاجر</Button>
+        </div>
+      ) : (
+        <div style={{ padding: "16px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {orders.map((order) => (
+            <div key={order.id} className="list-card" style={{ padding: 16, background: "white", borderRadius: 12, border: "1px solid #e0e0e0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontWeight: "bold", fontSize: 15, color: "#064b3d" }}>طلب #{order.id}</span>
+                <span style={{ fontSize: 12, background: "#e8f5e9", color: "#2e7d32", padding: "3px 8px", borderRadius: 4, fontWeight: 600 }}>{order.status}</span>
+              </div>
+              <p style={{ fontSize: 12, color: "#666", margin: "0 0 8px" }}>تاريخ الطلب: {order.date}</p>
+              <div style={{ borderTop: "1px solid #eee", paddingTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: "#444" }}>عدد الأصناف: {order.items?.length || 1}</span>
+                <span style={{ fontSize: 15, fontWeight: "bold", color: "#064b3d" }}>الإجمالي: {order.total?.toLocaleString()} ر.ي</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </VisitorShell>
+  );
 }
 
 function VisitorChats() {
@@ -1047,8 +1543,25 @@ function ExchangeRatesPage() {
 
 function RemittancePage() {
   const officialUrl = "https://www.unmoneye.com/ar/remittance-tracker";
+  const [remittanceImage, setRemittanceImage] = useState<string>("/assets/activity-banners/exchange.jpg");
+
+  useEffect(() => {
+    async function fetchRemittanceImage() {
+      try {
+        const docRef = doc(db, "settings", "remittanceHero");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data()?.imageUrl) {
+          setRemittanceImage(docSnap.data().imageUrl);
+        }
+      } catch (err) {
+        console.error("Failed to fetch remittance hero image:", err);
+      }
+    }
+    fetchRemittanceImage();
+  }, []);
+
   return <VisitorServiceShell>
-    <section className="finance-hero remittance-hero" style={{ backgroundImage: "linear-gradient(120deg,rgba(2,50,41,.96),rgba(5,94,75,.68)),url(/assets/activity-banners/exchange.jpg)" }}><div className="finance-icon"><FileText /></div><div><span className="eyebrow">خدمة خارجية رسمية</span><h1>الاستعلام عن الحوالات</h1><p>الشبكة الموحدة للأموال (UNMoney)</p></div></section>
+    <section className="finance-hero remittance-hero" style={{ backgroundImage: `linear-gradient(120deg,rgba(2,50,41,.96),rgba(5,94,75,.68)),url(${remittanceImage})`, backgroundSize: "cover", backgroundPosition: "center", borderRadius: "18px" }}><div className="finance-icon"><FileText /></div><div><span className="eyebrow">خدمة خارجية رسمية</span><h1>الاستعلام عن الحوالات</h1><p>الشبكة الموحدة للأموال (UNMoney)</p></div></section>
     <section className="official-service-card">
       <div className="official-brand"><Landmark /><div><h2>تتبع حوالتك بأمان عبر الموقع الرسمي</h2><p>سيتم توجيهك إلى بوابة الشبكة الموحدة للأموال لإدخال رقم الحوالة ومعرفة حالتها بشكل مباشر وآمن.</p></div></div>
       <Button kind="gold" onClick={() => window.open(officialUrl, "_blank", "noopener,noreferrer")}><Share2 /> الانتقال إلى تتبع الحوالة الرسمي</Button>
@@ -3029,7 +3542,52 @@ function ActivityImageAdmin() {
   const publishedBanners = loadActivityBanners();
   const [drafts, setDrafts] = useState<Record<string, string>>(published);
   const [bannerDrafts, setBannerDrafts] = useState<Record<string, string>>(publishedBanners);
+  const [remittanceImageUrl, setRemittanceImageUrl] = useState<string>("/assets/activity-banners/exchange.jpg");
+  const [uploadingRemittance, setUploadingRemittance] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    async function loadRemittanceImage() {
+      try {
+        const docRef = doc(db, "settings", "remittanceHero");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data()?.imageUrl) {
+          setRemittanceImageUrl(docSnap.data().imageUrl);
+        }
+      } catch (err) {
+        console.error("Failed to load remittance image:", err);
+      }
+    }
+    loadRemittanceImage();
+  }, []);
+
+  const handleRemittanceImagePick = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return toastMessage("اختر ملف صورة صالحًا");
+    if (file.size > 15_000_000) return toastMessage("حجم الصورة يتجاوز 15MB");
+
+    setUploadingRemittance(true);
+    try {
+      const storageRef = ref(storage, `remittance/hero_${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+
+      await setDoc(doc(db, "settings", "remittanceHero"), {
+        imageUrl: downloadUrl,
+        updatedAt: new Date().toISOString(),
+        adminEmail: "majdaltrki8@gmail.com"
+      }, { merge: true });
+
+      setRemittanceImageUrl(downloadUrl);
+      toastMessage("تم رفع وتغيير الصورة الرئيسية لقسم الاستعلام عن الحوالات وحفظها في Firebase بنجاح لتظهر لجميع المستخدمين");
+    } catch (err: any) {
+      toastMessage(`فشل رفع الصورة: ${err.message || "خطأ غير معروف"}`);
+    } finally {
+      setUploadingRemittance(false);
+    }
+  };
+
   const pick = (id: string, target: "card" | "banner", event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -3059,7 +3617,25 @@ function ActivityImageAdmin() {
     }, 450);
   };
   return <div className="activity-admin">
-    <div className="alert"><LockKeyhole /> التغييرات محلية في النموذج. عند ربط Firebase يجب حفظ الملفات في Storage والمسارات في قاعدة بيانات محمية بصلاحية الإدارة.</div>
+    <div className="alert success"><ShieldCheck /> لوحة إدارة الصورة الرئيسية لقسم الاستعلام عن الحوالات (Firebase Storage & Firestore متصلة وحفظ فوري لجميع المستخدمين).</div>
+    
+    <article style={{ background: "white", border: "2px solid var(--gold)", borderRadius: "18px", padding: "18px", marginBottom: "20px", boxShadow: "0 8px 24px rgba(6,75,61,0.08)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: "17px", color: "var(--forest)", fontWeight: 800 }}>قسم الاستعلام عن الحوالات (الصورة الرئيسية)</h2>
+          <p style={{ margin: "4px 0 0", color: "#666", fontSize: "11px" }}>ارفع صورة جديدة بجودة عالية (تظهر بزوايا دائرية وبعرض القسم بالكامل دون قص مشوه)</p>
+        </div>
+        <label className="btn btn-gold" style={{ cursor: uploadingRemittance ? "wait" : "pointer" }}>
+          <Upload /> {uploadingRemittance ? "جارٍ الرفع..." : "تغيير الصورة"}
+          <input hidden type="file" accept="image/*" onChange={handleRemittanceImagePick} disabled={uploadingRemittance} />
+        </label>
+      </div>
+      <div style={{ width: "100%", height: "180px", borderRadius: "14px", overflow: "hidden", position: "relative", border: "1px solid #ddd", background: "#f2f5f3" }}>
+        <img src={remittanceImageUrl} alt="معاينة قسم الاستعلام عن الحوالات" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      </div>
+    </article>
+
+    <div className="alert"><LockKeyhole /> التغييرات محلية في النموذج لصور الأنشطة الأخرى. عند ربط Firebase يجب حفظ الملفات في Storage والمسارات في قاعدة بيانات محمية بصلاحية الإدارة.</div>
     <div className="carousel-admin-toolbar"><div><b>صور بطاقات وبنرات الأنشطة</b><p>صورة البطاقة وصورة البنر مستقلتان، ولا تظهر التغييرات قبل الحفظ والنشر.</p></div><Button onClick={save} disabled={saving}>{saving ? <><span className="spinner" /> جارٍ الحفظ...</> : <><Check /> حفظ ونشر الصور</>}</Button></div>
     <div className="activity-admin-grid">{homeActivities.map((activity) => <article key={activity.id}><div className="activity-admin-previews"><figure><img src={drafts[activity.id] || activity.image} alt={`معاينة بطاقة ${activity.name}`} /><figcaption>صورة البطاقة</figcaption><label className="btn btn-outline"><Upload /> تغيير<input hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => pick(activity.id, "card", event)} /></label></figure><figure className="banner-preview"><img src={bannerDrafts[activity.id] || activity.banner} alt={`معاينة بنر ${activity.name}`} /><figcaption>بنر 16:9</figcaption><label className="btn btn-outline"><Upload /> تغيير البنر<input hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => pick(activity.id, "banner", event)} /></label></figure></div><div><b>{activity.name}</b><code>{activity.path}</code></div></article>)}</div>
   </div>;
@@ -3424,7 +4000,13 @@ function ReviewBoard() {
 }
 
 export default function App() {
-  const [path, setPath] = useState(() => (typeof window !== "undefined" ? window.location.pathname : "/"));
+  const [path, setPath] = useState(() => {
+    if (typeof window === "undefined") return "/";
+    const raw = window.location.hash && window.location.hash.startsWith("#/")
+      ? window.location.hash.slice(1)
+      : window.location.pathname;
+    return normalizeAppPath(raw);
+  });
   const [role, setRole] = useState<Role>(() => (safeStorage.getItem("yafa-role") as Role) || null);
   const searchStr = typeof window !== "undefined" ? window.location.search : "";
   const reviewParams = new URLSearchParams(searchStr);
@@ -3432,64 +4014,88 @@ export default function App() {
   const isReviewFrame = Boolean(reviewToken);
   const reviewRole = isReviewFrame ? (reviewParams.get("reviewRole") as Role) : null;
   const effectiveRole = reviewRole || role;
-  const [showSplash, setShowSplash] = useState(() => !reviewToken);
+
+  const [showSplash, setShowSplash] = useState(() => {
+    if (isReviewFrame) return false;
+    try {
+      if (safeSession.getItem("yafa_splash_shown")) return false;
+      safeSession.setItem("yafa_splash_shown", "1");
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   useEffect(() => {
     const handler = () => {
       if (typeof window !== "undefined") {
-        setPath(window.location.pathname);
+        const raw = window.location.hash && window.location.hash.startsWith("#/")
+          ? window.location.hash.slice(1)
+          : window.location.pathname;
+        const current = normalizeAppPath(raw);
+        setPath(current);
         const storedRole = (safeStorage.getItem("yafa-role") as Role) || null;
         if (storedRole !== role) setRole(storedRole);
       }
     };
     window.addEventListener("popstate", handler);
+    window.addEventListener("hashchange", handler);
     window.addEventListener("storage", handler);
     return () => {
       window.removeEventListener("popstate", handler);
+      window.removeEventListener("hashchange", handler);
       window.removeEventListener("storage", handler);
     };
   }, [role]);
+
   useEffect(() => {
-    const timer = window.setTimeout(() => setShowSplash(false), 1100);
+    if (!showSplash) return;
+    const timer = window.setTimeout(() => setShowSplash(false), 900);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [showSplash]);
+
   const content = useMemo(() => {
-    if (path === "/") return <VisitorHome />;
-    if (path === "/review-board") return <ReviewBoard />;
-    if (path === "/entry") return <Entry />;
-    if (path === "/audit") return <Audit />;
-    if (path === "/auth/visitor-login") return <VisitorLoginPrompt />;
-    if (path === "/auth/owner-login") return <Auth kind="owner" setRole={setRole} />;
-    if (path === "/auth/admin-login") return <Auth kind="admin" setRole={setRole} />;
-    if (path === "/owner/signup") return <SignupFlow step="signup" />;
-    if (path === "/owner/establishment") return <SignupFlow step="establishment" />;
-    if (path === "/owner/submitted") return <SignupFlow step="submitted" />;
-    if (path.startsWith("/owner/") && effectiveRole !== "owner") return <PortalGate portal="owner" path={path} />;
-    if (path.startsWith("/admin/") && effectiveRole !== "admin") return <PortalGate portal="admin" path={path} />;
-    if (path === "/visitor/home") return <VisitorHome />;
-    if (path === "/visitor/share") return <ShareEarn />;
-    if (path === "/visitor/fuel") return <FuelPage />;
-    if (path === "/visitor/exchange-rates") return <ExchangeRatesPage />;
-    if (path === "/visitor/remittance") return <RemittancePage />;
-    if (path === "/visitor/used") return <UsedMarketplace />;
-    if (path === "/visitor/used/new") return <UsedMarketplace create />;
-    if (path === "/visitor/search") return <SearchPage />;
-    if (path === "/visitor/chats") return <VisitorChats />;
-    if (path === "/visitor/cart" || path === "/visitor/orders" || path === "/visitor/favorites") return <CartLike type={path.split("/").pop() as "cart" | "orders" | "favorites"} />;
-    if (path.startsWith("/visitor/store/")) return <VisitorDetail kind="store" />;
-    if (path.startsWith("/visitor/product/")) return <VisitorDetail kind="product" />;
-    const visitorType = path.match(/^\/visitor\/([^/]+)$/)?.[1];
+    const cleanPath = normalizeAppPath(path);
+
+    if (cleanPath === "/" || cleanPath === "/index.html") return <VisitorHome />;
+    if (cleanPath === "/visitor/home") return <VisitorHome />;
+    if (cleanPath === "/review-board") return <ReviewBoard />;
+    if (cleanPath === "/entry") return <Entry />;
+    if (cleanPath === "/audit") return <Audit />;
+    if (cleanPath === "/auth/visitor-login") return <VisitorLoginPrompt />;
+    if (cleanPath === "/auth/owner-login") return <Auth kind="owner" setRole={setRole} />;
+    if (cleanPath === "/auth/admin-login") return <Auth kind="admin" setRole={setRole} />;
+    if (cleanPath === "/owner/signup") return <SignupFlow step="signup" />;
+    if (cleanPath === "/owner/establishment") return <SignupFlow step="establishment" />;
+    if (cleanPath === "/owner/submitted") return <SignupFlow step="submitted" />;
+    if (cleanPath.startsWith("/owner/") && effectiveRole !== "owner") return <PortalGate portal="owner" path={cleanPath} />;
+    if (cleanPath.startsWith("/admin/") && effectiveRole !== "admin") return <PortalGate portal="admin" path={cleanPath} />;
+    if (cleanPath === "/visitor/share") return <ShareEarn />;
+    if (cleanPath === "/visitor/fuel") return <FuelPage />;
+    if (cleanPath === "/visitor/exchange-rates") return <ExchangeRatesPage />;
+    if (cleanPath === "/visitor/remittance") return <RemittancePage />;
+    if (cleanPath === "/visitor/used") return <UsedMarketplace />;
+    if (cleanPath === "/visitor/used/new") return <UsedMarketplace create />;
+    if (cleanPath === "/visitor/search") return <SearchPage />;
+    if (cleanPath === "/visitor/chats") return <VisitorChats />;
+    if (cleanPath === "/visitor/cart" || cleanPath === "/visitor/orders" || cleanPath === "/visitor/favorites") {
+      return <CartLike type={cleanPath.split("/").pop() as "cart" | "orders" | "favorites"} />;
+    }
+    if (cleanPath.startsWith("/visitor/store/")) return <VisitorDetail kind="store" currentPath={cleanPath} />;
+    if (cleanPath.startsWith("/visitor/product/")) return <VisitorDetail kind="product" currentPath={cleanPath} />;
+    const visitorType = cleanPath.match(/^\/visitor\/([^/]+)$/)?.[1];
     if (visitorType && categoryCopy[visitorType]) return <VisitorCategory type={visitorType} />;
-    if (path === "/visitor/notifications") return <VisitorShell><ScenicHero title="الإشعارات" subtitle="آخر تحديثات الطلبات والعروض" /><div className="panel"><div className="alert success"><Bell /> عرض جديد من متجر في يافع</div><div className="alert"><Package /> تم تحديث حالة طلبك التجريبي</div></div></VisitorShell>;
-    if (path === "/owner/dashboard") return <OwnerDashboard setRole={setRole} />;
-    if (path === "/owner/products") return <OwnerProducts setRole={setRole} />;
-    if (path.startsWith("/owner/product/new")) return <ProductForm setRole={setRole} />;
-    if (path === "/owner/setup") return <OwnerSetup setRole={setRole} />;
-    if (path === "/owner/sections") return <OwnerSections setRole={setRole} />;
-    if (path === "/owner/share") return <OwnerShare setRole={setRole} />;
-    if (path === "/owner/orders") return <OwnerOrders setRole={setRole} />;
-    if (path === "/owner/ads") return <OwnerAds setRole={setRole} />;
-    if (path === "/owner/reports") return <OwnerReports setRole={setRole} />;
-    if (path === "/admin/appearance") {
+    if (cleanPath === "/visitor/notifications") return <VisitorShell><ScenicHero title="الإشعارات" subtitle="آخر تحديثات الطلبات والعروض" /><div className="panel"><div className="alert success"><Bell /> عرض جديد من متجر في يافع</div><div className="alert"><Package /> تم تحديث حالة طلبك التجريبي</div></div></VisitorShell>;
+    if (cleanPath === "/owner/dashboard") return <OwnerDashboard setRole={setRole} />;
+    if (cleanPath === "/owner/products") return <OwnerProducts setRole={setRole} />;
+    if (cleanPath.startsWith("/owner/product/new")) return <ProductForm setRole={setRole} />;
+    if (cleanPath === "/owner/setup") return <OwnerSetup setRole={setRole} />;
+    if (cleanPath === "/owner/sections") return <OwnerSections setRole={setRole} />;
+    if (cleanPath === "/owner/share") return <OwnerShare setRole={setRole} />;
+    if (cleanPath === "/owner/orders") return <OwnerOrders setRole={setRole} />;
+    if (cleanPath === "/owner/ads") return <OwnerAds setRole={setRole} />;
+    if (cleanPath === "/owner/reports") return <OwnerReports setRole={setRole} />;
+    if (cleanPath === "/admin/appearance") {
       return (
         <div className="min-h-screen bg-[#f4f7f5] pb-24" dir="rtl">
           <header className="bg-[#064b3d] text-white p-3.5 flex items-center justify-between sticky top-0 z-30 shadow-md">
@@ -3515,7 +4121,7 @@ export default function App() {
         </div>
       );
     }
-    const adminType = path.match(/^\/admin\/([^/]+)$/)?.[1];
+    const adminType = cleanPath.match(/^\/admin\/([^/]+)$/)?.[1];
     if (adminType && adminMeta[adminType]) return <AdminPage type={adminType} setRole={setRole} />;
     return <main className="state-page" style={{ padding: "40px 20px", maxWidth: "480px", margin: "0 auto", textAlign: "center" }}>
       <div style={{ background: "rgba(199, 148, 44, 0.12)", color: "#c7942c", width: "64px", height: "64px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px auto" }}>
@@ -3530,5 +4136,6 @@ export default function App() {
       </div>
     </main>;
   }, [path, role, effectiveRole]);
+
   return <div dir="rtl" style={{ color: green }}>{showSplash && <div className="web-splash" role="status" aria-label="جاري تشغيل يافع ون"><img src="/icons/icon-512.png" alt="يافع ون | YAFA ONE" /><span>يافع ون | YAFA ONE</span></div>}{content}{!isReviewFrame && path !== "/review-board" && <><Toast /><button className="audit-link" onClick={() => route("/audit")}>خريطة 40 شاشة</button><button className="review-board-link" onClick={() => route("/review-board")}>لوحة الصفحات</button></>}</div>;
 }

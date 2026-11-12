@@ -62,6 +62,21 @@ async function buildStandalone() {
     </div>
   </div>
   <script type="module" src="app.js"></script>
+  <script>
+    // Failsafe watchdog: If app.js takes longer than 4s, provide manual bypass
+    setTimeout(function() {
+      var root = document.getElementById('root');
+      if (root && root.querySelector && root.querySelector('[style*="yafa-spin"]')) {
+        var fallbackBox = document.createElement('div');
+        fallbackBox.style.marginTop = '20px';
+        fallbackBox.style.textAlign = 'center';
+        fallbackBox.innerHTML = '<p style="color:#eedab0;font-size:13px;margin-bottom:12px;">استغرق بدء التطبيق وقتاً أطول من المعتاد</p>' +
+          '<button onclick="window.location.hash=\\'#/visitor/home\\';window.location.reload();" style="background:#eedab0;color:#064b3d;border:none;padding:8px 18px;border-radius:8px;font-weight:bold;cursor:pointer;font-size:13px;">تخطي والبدء الآن</button>';
+        var spinnerParent = root.querySelector('[style*="yafa-spin"]').parentNode;
+        if (spinnerParent) spinnerParent.appendChild(fallbackBox);
+      }
+    }, 4000);
+  </script>
 </body>
 </html>
 `

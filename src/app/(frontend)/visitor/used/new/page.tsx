@@ -1,5 +1,5 @@
 import LegacyRoot from '@/components/LegacyRoot'
 
-export default function VisitorUsedNewPage() {
+export default function VisitorNewUsedAdPage() {
   return <LegacyRoot />
 }

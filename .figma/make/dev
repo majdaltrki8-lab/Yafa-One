@@ -9,6 +9,6 @@ set -euo pipefail
 # is fine for the (frontend) routes the user sees pre-connect. After the
 # backend connects and the workload restarts, this will succeed and pick
 # up any new components the alpha @payloadcms/figma exposes.
-pnpm generate:importmap || echo "[dev] generate:importmap skipped (Payload backend not connected yet)"
+npm run generate:importmap || echo "[dev] generate:importmap skipped (Payload backend not connected yet)"
 
-pnpm run dev
+npm run dev

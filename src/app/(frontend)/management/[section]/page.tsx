@@ -6,6 +6,7 @@ const sections = new Set([
   'dashboard', 'users', 'establishments', 'stores', 'products', 'orders', 'analytics', 'roles',
   'media', 'activity-images', 'ads', 'carousel', 'promotions', 'reports', 'payments', 'settlements',
   'exchange-rates', 'referrals', 'notifications', 'settings', 'backup', 'audit', 'appearance',
+  'professionals', 'app-images',
 ])
 
 export default async function ManagementPage({ params }: { params: Promise<{ section: string }> }) {

@@ -16,8 +16,20 @@ import { mockDatabaseAdapter } from './lib/mock-db-adapter'
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 
+import crypto from 'crypto'
+
+function getPayloadSecret(): string {
+  const envSecret = process.env.PAYLOAD_SECRET || process.env.SESSION_SECRET
+  if (envSecret && envSecret.length >= 16) return envSecret
+  const g = globalThis as typeof globalThis & { __yafaPayloadSecret?: string }
+  if (!g.__yafaPayloadSecret) {
+    g.__yafaPayloadSecret = crypto.randomBytes(32).toString('hex')
+  }
+  return g.__yafaPayloadSecret
+}
+
 export default buildConfig({
-  secret: process.env.PAYLOAD_SECRET || 'd8b5f3a1e948c207b6e3f5d1a89c4270e5b8163f27a4d9c0e358b1fa2479e61c',
+  secret: getPayloadSecret(),
   db: mockDatabaseAdapter(),
   editor: lexicalEditor(),
   admin: {

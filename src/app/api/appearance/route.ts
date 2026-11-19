@@ -10,11 +10,22 @@ const DATA_DIR = path.join(process.cwd(), 'data')
 const APPEARANCE_FILE = path.join(DATA_DIR, 'appearance.json')
 
 // Cryptographic server admin key
-const SERVER_SECRET = process.env.PAYLOAD_SECRET || 'd8b5f3a1e948c207b6e3f5d1a89c4270e5b8163f27a4d9c0e358b1fa2479e61c'
-const DERIVED_ADMIN_KEY = crypto
-  .createHmac('sha256', SERVER_SECRET)
-  .update('yafa-one-admin-appearance-v1')
-  .digest('hex')
+function getServerSecret(): string {
+  const envSecret = process.env.SESSION_SECRET || process.env.PAYLOAD_SECRET
+  if (envSecret && envSecret.length >= 16) return envSecret
+  const g = globalThis as typeof globalThis & { __yafaAppearanceSecret?: string }
+  if (!g.__yafaAppearanceSecret) {
+    g.__yafaAppearanceSecret = crypto.randomBytes(32).toString('hex')
+  }
+  return g.__yafaAppearanceSecret
+}
+
+function getDerivedAdminKey(): string {
+  return crypto
+    .createHmac('sha256', getServerSecret())
+    .update('yafa-one-admin-appearance-v1')
+    .digest('hex')
+}
 
 // Load persistent appearance from database file on disk, or fallback to default
 function loadPersistedAppearance(): AppAppearance {
@@ -67,7 +78,7 @@ function verifyTimingSafeKey(providedKey: string): boolean {
   const validKeys = [
     process.env.ADMIN_API_KEY,
     process.env.ADMIN_SECRET_KEY,
-    DERIVED_ADMIN_KEY,
+    getDerivedAdminKey(),
   ].filter(Boolean) as string[]
 
   for (const validKey of validKeys) {
@@ -81,6 +92,8 @@ function verifyTimingSafeKey(providedKey: string): boolean {
   }
   return false
 }
+
+import { verifySessionToken } from '@/lib/session'
 
 async function verifyAdminAuth(req: NextRequest, bodyKey?: string): Promise<{ authorized: boolean; reason?: string }> {
   // 1. Check custom admin header
@@ -103,7 +116,13 @@ async function verifyAdminAuth(req: NextRequest, bodyKey?: string): Promise<{ au
     return { authorized: true }
   }
 
-  // 4. Check Payload CMS authenticated admin session (payload-token cookie)
+  // 4. Check signed HTTP-only admin session cookie
+  const session = await verifySessionToken(req.cookies.get('yafa-session')?.value)
+  if (session?.role === 'admin') {
+    return { authorized: true }
+  }
+
+  // 5. Check Payload CMS authenticated admin session (payload-token cookie)
   try {
     const payload = await getPayload({ config })
     const { user } = await payload.auth({ headers: req.headers })
@@ -112,13 +131,6 @@ async function verifyAdminAuth(req: NextRequest, bodyKey?: string): Promise<{ au
     }
   } catch {
     // Non-fatal
-  }
-
-  // 5. Check if req has cookie yafa-role=admin along with x-requested-with header
-  const roleCookie = req.cookies.get('yafa-role')?.value
-  const requestedWith = req.headers.get('x-requested-with')
-  if (roleCookie === 'admin' && requestedWith === 'XMLHttpRequest') {
-    return { authorized: true }
   }
 
   return {
@@ -209,7 +221,7 @@ export async function POST(req: NextRequest) {
         data: {
           action: 'تعديل المظهر',
           area: 'إدارة المظهر والمحتوى',
-          actorEmail: 'admin@yafaone.com',
+          actorEmail: 'majdaltrki8@gmail.com',
           summary: `تحديث المظهر (الإصدار ${newAppearance.version}): الشعار (${newAppearance.brand.logoText}) والألوان والأقسام`,
         },
         overrideAccess: true,

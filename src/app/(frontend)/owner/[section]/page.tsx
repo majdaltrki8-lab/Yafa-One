@@ -11,6 +11,7 @@ const validOwnerSections = new Set([
   'ads',
   'reports',
   'preview',
+  'chats',
   'signup',
   'establishment',
   'submitted',

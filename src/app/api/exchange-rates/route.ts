@@ -25,11 +25,22 @@ let serverExchangeRates = {
 };
 
 // Cryptographic admin key derived strictly on server from secret (never exposed to client)
-const SERVER_SECRET = process.env.PAYLOAD_SECRET || 'd8b5f3a1e948c207b6e3f5d1a89c4270e5b8163f27a4d9c0e358b1fa2479e61c';
-const DERIVED_ADMIN_KEY = crypto
-  .createHmac('sha256', SERVER_SECRET)
-  .update('yafa-one-admin-exchange-rates-v1')
-  .digest('hex');
+function getServerSecret(): string {
+  const envSecret = process.env.SESSION_SECRET || process.env.PAYLOAD_SECRET;
+  if (envSecret && envSecret.length >= 16) return envSecret;
+  const g = globalThis as typeof globalThis & { __yafaExchangeSecret?: string };
+  if (!g.__yafaExchangeSecret) {
+    g.__yafaExchangeSecret = crypto.randomBytes(32).toString('hex');
+  }
+  return g.__yafaExchangeSecret;
+}
+
+function getDerivedAdminKey(): string {
+  return crypto
+    .createHmac('sha256', getServerSecret())
+    .update('yafa-one-admin-exchange-rates-v1')
+    .digest('hex');
+}
 
 function verifyTimingSafeKey(providedKey: string): boolean {
   if (!providedKey || typeof providedKey !== 'string') return false;
@@ -38,7 +49,7 @@ function verifyTimingSafeKey(providedKey: string): boolean {
   const validKeys = [
     process.env.ADMIN_API_KEY,
     process.env.ADMIN_EXCHANGE_KEY,
-    DERIVED_ADMIN_KEY,
+    getDerivedAdminKey(),
   ].filter(Boolean) as string[];
 
   for (const validKey of validKeys) {
@@ -52,6 +63,8 @@ function verifyTimingSafeKey(providedKey: string): boolean {
   }
   return false;
 }
+
+import { verifySessionToken } from '@/lib/session'
 
 async function verifyAdminAuth(req: NextRequest, bodyKey?: string): Promise<{ authorized: boolean; reason?: string }> {
   // 1. Check custom admin header
@@ -74,7 +87,13 @@ async function verifyAdminAuth(req: NextRequest, bodyKey?: string): Promise<{ au
     return { authorized: true };
   }
 
-  // 4. Check Payload CMS authenticated admin session (if payload-token cookie exists)
+  // 4. Check signed HTTP-only admin session cookie
+  const session = await verifySessionToken(req.cookies.get('yafa-session')?.value);
+  if (session?.role === 'admin') {
+    return { authorized: true };
+  }
+
+  // 5. Check Payload CMS authenticated admin session (if payload-token cookie exists)
   try {
     const payload = await getPayload({ config });
     const { user } = await payload.auth({ headers: req.headers });
@@ -141,6 +160,23 @@ export async function GET(req: NextRequest) {
         headers: { 'Retry-After': String(limitCheck.retryAfterSeconds) }
       }
     );
+  }
+
+  try {
+    const { db } = await import('@/lib/firebase');
+    const { doc, getDoc } = await import('firebase/firestore');
+    const snap = await getDoc(doc(db, 'settings', 'exchangeRates'));
+    if (snap.exists()) {
+      const fbData = snap.data() as any;
+      if (fbData?.rates?.SAR && fbData?.rates?.USD) {
+        serverExchangeRates = {
+          ...serverExchangeRates,
+          ...fbData,
+        };
+      }
+    }
+  } catch {
+    // fallback to server memory
   }
 
   return NextResponse.json({
@@ -220,6 +256,14 @@ export async function POST(req: NextRequest) {
       updateIntervalMinutes: 15,
       history: [historyEntry, ...(serverExchangeRates.history || [])].slice(0, 20),
     };
+
+    try {
+      const { db } = await import('@/lib/firebase');
+      const { doc, setDoc } = await import('firebase/firestore');
+      await setDoc(doc(db, 'settings', 'exchangeRates'), serverExchangeRates);
+    } catch {
+      // Non-fatal if server lacks Firebase user token; client admin session also syncs
+    }
 
     return NextResponse.json({
       success: true,

@@ -51,7 +51,7 @@ export type AppAppearance = {
 
 export const defaultAppearance: AppAppearance = {
   version: 1,
-  updatedAt: new Date().toISOString(),
+  updatedAt: '2026-01-01T00:00:00.000Z',
   colors: {
     forest: '#064b3d',
     forestDark: '#03372d',

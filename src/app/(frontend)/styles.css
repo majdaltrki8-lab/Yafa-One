@@ -203,3 +203,130 @@ input:focus,select:focus,textarea:focus { border-color: var(--gold); box-shadow:
 @media (max-width:1180px) { .admin-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); }.admin-media-shortcuts { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:900px) { .admin-sidebar { transform:translateX(105%); transition:transform .25s; }.admin-sidebar.open { transform:translateX(0); }.admin-side-head { display:flex; align-items:center; justify-content:space-between; }.admin-side-head > button { width:40px; height:40px; border:0; border-radius:50%; display:grid; place-items:center; color:white; background:#ffffff17; }.admin-workspace { margin-right:0; }.admin-menu-button { width:44px; height:44px; display:grid; place-items:center; border:1px solid var(--admin-line); border-radius:10px; color:var(--admin-forest); background:white; }.admin-topbar { padding:9px 14px; }.admin-topbar > .admin-brand { display:none; }.admin-profile { margin-right:auto; }.admin-overlay { position:fixed; z-index:50; inset:0; display:block; border:0; background:#001d176b; }.admin-content { padding:18px 14px; }.admin-page-heading { align-items:stretch; flex-direction:column; }.admin-heading-actions { flex-wrap:wrap; }.admin-chart-grid { grid-template-columns:1fr; } }
 @media (max-width:600px) { .admin-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }.admin-kpi { min-height:100px; padding:10px; }.admin-kpi > span { width:40px; height:40px; }.admin-kpi strong { font-size:18px; }.admin-media-shortcuts { grid-template-columns:1fr; }.admin-page-heading h1 { font-size:24px; }.admin-heading-actions .admin-button { flex:1; min-width:135px; }.admin-bars { gap:3%; }.admin-bars span { font-size:6px; }.admin-export-actions { width:100%; }.admin-panel-title { align-items:flex-start; flex-wrap:wrap; }.admin-export-actions button { flex:1; }.admin-table-tools { align-items:stretch; flex-direction:column; }.admin-topbar .admin-profile span { max-width:190px; overflow:hidden; text-overflow:ellipsis; }.admin-profile small { display:none; } }
+
+/* Owner portal simplified layout */
+.owner-bottom { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.owner-stats.owner-stats-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 480px) {
+  .owner-stats.owner-stats-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .owner-stats.owner-stats-3 article:last-child { grid-column: 1 / -1; min-height: 98px; }
+}
+
+/* Mobile-first store cards directory override */
+@media (max-width: 480px) {
+  .store-grid { grid-template-columns: 1fr; gap: 14px; }
+  .store-card { display: block; border-radius: 20px; }
+  .store-card img { height: 195px; min-height: 195px; width: 100%; }
+  .store-card > div { padding: 15px; }
+  .store-card h3 { font-size: 17px; }
+  .store-card .card-actions .btn { min-height: 46px; font-size: 13px; }
+}
+
+/* Mobile-first Commercial Store Page */
+.mobile-subbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0 10px; }
+.mobile-back-btn { min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--forest); display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.store-fav-chip { min-height: 44px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--forest); display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.store-fav-chip.active { border-color: #e7bfc4; background: #fff5f6; color: #b72b38; }
+
+.store-profile-card { background: white; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); margin-bottom: 18px; }
+.store-profile-media { position: relative; height: 240px; background: var(--forest-dark); }
+.store-profile-media img { width: 100%; height: 100%; object-fit: cover; }
+.store-profile-scrim { position: absolute; inset: 0; padding: 18px; display: flex; flex-direction: column; justify-content: flex-end; background: linear-gradient(180deg, rgba(3,55,45,0.08) 20%, rgba(3,55,45,0.88) 100%); color: white; }
+.store-verified-line { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #f3d27d; margin-bottom: 4px; }
+.store-profile-scrim h1 { margin: 0; font-size: clamp(22px, 6vw, 30px); line-height: 1.35; color: white; text-wrap: balance; }
+
+.store-profile-body { padding: 16px; display: grid; gap: 14px; }
+.store-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.store-meta-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 14px; background: #f6f9f7; border: 1px solid #e4ece8; min-width: 0; }
+.store-meta-icon { width: 38px; height: 38px; flex: none; border-radius: 11px; background: #fff5dc; color: var(--gold); display: grid; place-items: center; }
+.store-meta-icon svg { width: 20px; height: 20px; }
+.store-meta-item small { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.store-meta-item b { display: block; font-size: 13px; color: var(--forest); line-height: 1.45; overflow-wrap: anywhere; }
+
+.store-desc-box { padding: 12px 14px; border-radius: 14px; background: #fafaf6; border: 1px solid #ebe7d8; }
+.store-desc-box h2 { margin: 0 0 6px; font-size: 14px; color: var(--forest); }
+.store-desc-box p { margin: 0; font-size: 13px; line-height: 1.75; color: #475852; }
+
+.store-primary-actions { display: grid; grid-template-columns: 1.25fr 1fr; gap: 10px; }
+.store-primary-actions .btn { min-height: 48px; font-size: 14px; }
+.store-quick-contact-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.store-quick-btn { min-height: 44px; padding: 8px 12px; border: 1px solid #cfe0d9; border-radius: 12px; background: #f2f8f5; color: var(--forest); display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 700; }
+.store-quick-btn svg { width: 17px; height: 17px; color: var(--gold); }
+
+.store-sections-block, .store-products-block { margin: 18px 0; }
+.store-block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.store-block-head h2 { margin: 0 0 2px; font-size: 19px; color: var(--forest); }
+.store-block-head p { margin: 0; font-size: 12px; color: var(--muted); }
+
+.store-section-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+.store-section-tab { flex: none; min-height: 44px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 13px; background: white; color: var(--forest); display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.store-section-tab.active { background: var(--forest); border-color: var(--forest); color: white; }
+.store-section-tab.active svg { color: #f3d27d; }
+
+.store-products-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.store-product-card { background: white; border: 1px solid var(--line); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 6px 20px rgba(6,75,61,.06); min-width: 0; }
+.store-product-thumb { height: 155px; background: var(--cream); }
+.store-product-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.store-product-info { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.store-product-cat { font-size: 11px; color: var(--muted); }
+.store-product-info h3 { margin: 0; font-size: 14px; line-height: 1.45; color: var(--forest); }
+.store-product-info strong { font-size: 15px; color: var(--gold); font-variant-numeric: tabular-nums; margin-top: auto; }
+.store-product-info .btn { width: 100%; min-height: 44px; margin-top: 4px; font-size: 13px; }
+
+/* Mobile-first Fuel Stations & Domestic Gas Pages */
+.fuel-switcher { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 6px; border-radius: 16px; background: white; border: 1px solid var(--line); margin: 14px 0 18px; box-shadow: 0 5px 18px rgba(6,75,61,.05); }
+.fuel-switcher button { min-height: 46px; border: 0; border-radius: 11px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.fuel-switcher button.active { background: var(--forest); color: white; }
+.fuel-switcher button.active svg { color: #f3d27d; }
+
+.fuel-section { margin: 18px 0 26px; }
+.fuel-cards-list { display: grid; gap: 16px; }
+.fuel-mobile-card { background: white; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); }
+.fuel-card-banner { position: relative; height: 165px; background: var(--forest-dark); }
+.fuel-card-banner img { width: 100%; height: 100%; object-fit: cover; }
+.fuel-card-banner-scrim { position: absolute; inset: 0; padding: 16px; display: flex; flex-direction: column; justify-content: flex-end; background: linear-gradient(180deg, rgba(3,55,45,0.18) 10%, rgba(3,55,45,0.90) 100%); color: white; }
+.availability-label { width: fit-content; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: #b6f5d5; margin-bottom: 4px; }
+.availability-label.unavailable { color: #ffd79a; }
+.fuel-card-banner-scrim h3 { margin: 0 0 4px; font-size: 20px; color: white; }
+.fuel-card-banner-scrim p { margin: 0; display: flex; align-items: center; gap: 5px; font-size: 13px; color: #e2efea; }
+
+.fuel-card-body { padding: 15px; display: grid; gap: 14px; }
+.fuel-services-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fuel-service-box { display: flex; align-items: center; gap: 10px; padding: 11px; border-radius: 14px; border: 1px solid #e0e9e4; background: #f7faf8; min-width: 0; }
+.fuel-service-box.off { opacity: 0.72; background: #faf9f6; border-color: #ece6d8; }
+.fuel-srv-icon { width: 40px; height: 40px; flex: none; border-radius: 12px; background: #fff5dc; color: var(--gold); display: grid; place-items: center; }
+.fuel-srv-icon svg { width: 20px; height: 20px; }
+.fuel-service-box b { display: block; font-size: 13px; color: var(--forest); }
+.fuel-service-box small { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+.fuel-cta-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fuel-cta-row .btn { min-height: 48px; font-size: 14px; }
+
+.gas-summary-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border-radius: 14px; background: #f8faf6; border: 1px solid #e4ece6; }
+.gas-summary-strip > div { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.gas-summary-strip b { color: var(--forest); font-variant-numeric: tabular-nums; }
+.gas-actions-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.gas-actions-grid .btn { min-height: 48px; font-size: 13px; }
+
+.gas-mode-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 5px; background: #f2f6f4; border-radius: 12px; }
+.gas-mode-tabs button { min-height: 42px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
+.gas-mode-tabs button.active { background: var(--forest); color: white; }
+.gas-total-box { padding: 12px 14px; border-radius: 13px; background: #faf6eb; border: 1px solid #ead8aa; display: flex; align-items: center; justify-content: space-between; }
+.gas-total-box span { font-size: 13px; color: var(--forest); font-weight: 700; }
+.gas-total-box strong { font-size: 18px; color: var(--gold); font-variant-numeric: tabular-nums; }
+
+@media (min-width: 760px) {
+  .store-profile-media { height: 320px; }
+  .store-products-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .fuel-cards-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 480px) {
+  .store-meta-grid { grid-template-columns: 1fr; }
+  .store-primary-actions { grid-template-columns: 1fr; }
+  .store-products-grid { grid-template-columns: 1fr; }
+  .store-product-thumb { height: 190px; }
+  .gas-summary-strip { grid-template-columns: 1fr; }
+  .fuel-switcher button { font-size: 11px; padding: 0 4px; }
+}
+

@@ -6,8 +6,8 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "معرف المستخدم الموحد في Firebase Auth" },
-        "phoneNumber": { "type": "string", "description": "رقم الهاتف الدولي للمستخدم" },
-        "name": { "type": "string", "description": "الاسم الكامل للمستخدم" },
+        "phoneNumber": { "type": "string", "maxLength": 30, "description": "رقم الهاتف الدولي للمستخدم" },
+        "name": { "type": "string", "maxLength": 120, "description": "الاسم الكامل للمستخدم" },
         "role": { "type": "string", "enum": ["customer", "owner", "admin"], "description": "دور المستخدم في المنصة" },
         "status": { "type": "string", "enum": ["active", "suspended", "pending"], "description": "حالة الحساب" },
         "createdAt": { "type": "string", "description": "تاريخ إنشاء الحساب" }
@@ -21,7 +21,7 @@
       "properties": {
         "id": { "type": "string", "description": "معرف المنشأة الفريد" },
         "ownerId": { "type": "string", "description": "معرف صاحب المنشأة (UID)" },
-        "name": { "type": "string", "description": "اسم المتجر أو المنشأة" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 160, "description": "اسم المتجر أو المنشأة" },
         "district": { "type": "string", "description": "المديرية في يافع" },
         "category": { "type": "string", "description": "النشاط التجاري" },
         "phone": { "type": "string", "description": "رقم هاتف المنشأة" },
@@ -38,14 +38,16 @@
       "properties": {
         "id": { "type": "string", "description": "معرف المنتج الفريد" },
         "establishmentId": { "type": "string", "description": "معرف المنشأة التابع لها المنتج" },
+        "ownerId": { "type": "string", "description": "معرف صاحب المنشأة المالكة للمنتج (UID)" },
         "name": { "type": "string", "description": "اسم المنتج أو الخدمة" },
         "price": { "type": "number", "description": "سعر المنتج" },
         "currency": { "type": "string", "enum": ["YER", "SAR", "USD"], "description": "عملة السعر" },
         "category": { "type": "string", "description": "تصنيف المنتج" },
+        "approved": { "type": "boolean", "description": "هل تم اعتماد المنتج للعرض العام" },
         "inStock": { "type": "boolean", "description": "حالة توفر المنتج في المخزون" },
         "createdAt": { "type": "string", "description": "تاريخ الإضافة" }
       },
-      "required": ["id", "establishmentId", "name", "price", "currency", "inStock", "createdAt"]
+      "required": ["id", "establishmentId", "ownerId", "name", "price", "currency", "approved", "inStock", "createdAt"]
     },
     "Order": {
       "title": "Order",
@@ -56,10 +58,27 @@
         "customerId": { "type": "string", "description": "معرف العميل صاحب الطلب" },
         "establishmentId": { "type": "string", "description": "معرف المنشأة المستقبلة للطلب" },
         "total": { "type": "number", "description": "إجمالي قيمة الطلب" },
-        "status": { "type": "string", "enum": ["pending", "confirmed", "delivering", "completed", "cancelled"], "description": "حالة الطلب" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "delivering", "completed", "cancelled", "قيد الانتظار", "قيد التجهيز", "جاري التوصيل", "مكتمل", "ملغي"], "description": "حالة الطلب" },
         "createdAt": { "type": "string", "description": "تاريخ إنشاء الطلب" }
       },
       "required": ["id", "customerId", "establishmentId", "total", "status", "createdAt"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "بيانات المحادثة المباشرة بين العميل وصاحب المتجر",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف المحادثة الفريد" },
+        "visitorId": { "type": "string", "description": "معرف العميل أو الزائر (UID)" },
+        "ownerId": { "type": "string", "description": "معرف صاحب المتجر (UID)" },
+        "establishmentId": { "type": "string", "description": "معرف المتجر أو المنشأة" },
+        "storeName": { "type": "string", "description": "اسم المتجر" },
+        "customerName": { "type": "string", "description": "اسم العميل" },
+        "customerPhone": { "type": "string", "description": "رقم جوال العميل" },
+        "messages": { "type": "array", "description": "رسائل المحادثة" },
+        "updatedAt": { "type": "string", "description": "تاريخ آخر رسالة" }
+      },
+      "required": ["id", "visitorId", "establishmentId", "messages", "updatedAt"]
     },
     "Advertisement": {
       "title": "Advertisement",
@@ -76,6 +95,33 @@
       },
       "required": ["id", "title", "image", "placement", "active", "order", "createdAt"]
     },
+    "UsedAd": {
+      "title": "UsedAd",
+      "description": "بيانات إعلانات حراج المستعمل",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف الإعلان" },
+        "sellerId": { "type": "string", "description": "معرف البائع (UID)" },
+        "ownerId": { "type": "string", "description": "معرف المالك المطابق للبائع (UID)" },
+        "title": { "type": "string", "description": "عنوان السلعة" },
+        "approved": { "type": "boolean", "description": "اعتماد الإدارة للنشر العام" },
+        "createdAt": { "type": "string", "description": "تاريخ الإضافة" }
+      },
+      "required": ["id", "sellerId", "ownerId", "title", "approved", "createdAt"]
+    },
+    "Complaint": {
+      "title": "Complaint",
+      "description": "بلاغات وشكاوى المستخدمين",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "معرف البلاغ" },
+        "userId": { "type": "string", "description": "معرف مقدم البلاغ (UID)" },
+        "subject": { "type": "string", "description": "موضوع البلاغ" },
+        "details": { "type": "string", "description": "تفاصيل البلاغ" },
+        "createdAt": { "type": "string", "description": "تاريخ التقديم" }
+      },
+      "required": ["id", "userId", "subject", "createdAt"]
+    },
     "AppearanceSetting": {
       "title": "AppearanceSetting",
       "description": "إعدادات المظهر والسمات والهوية البصرية لمنصة يافع ون",
@@ -85,6 +131,40 @@
         "updatedAt": { "type": "string", "description": "وقت آخر تحديث" }
       },
       "required": ["version", "updatedAt"]
+    },
+    "AppImageSlot": {
+      "title": "AppImageSlot",
+      "description": "سجل إدارة جميع صور التطبيق المركزية وربطها بمواضع وصفحات يافع ون",
+      "type": "object",
+      "properties": {
+        "slotId": { "type": "string", "description": "المعرف الفريد لموضع الصورة في التطبيق" },
+        "pageName": { "type": "string", "description": "اسم الصفحة التي تظهر فيها الصورة" },
+        "placementLabel": { "type": "string", "description": "وصف مكان ظهور الصورة داخل الصفحة" },
+        "images": { "type": "array", "description": "قائمة الصور النشطة والمرتبة (الصورة الرئيسية والصور الإضافية)" },
+        "previousImages": { "type": "array", "description": "نسخة الصور السابقة لإمكانية الاستعادة الفورية" },
+        "updatedAt": { "type": "string", "description": "تاريخ ووقت آخر تحديث" },
+        "updatedBy": { "type": "string", "description": "البريد أو معرف المدير الذي نفذ التعديل" }
+      },
+      "required": ["slotId", "images", "updatedAt"]
+    },
+    "Professional": {
+      "title": "Professional",
+      "description": "سجل صاحب المهنة والحرفي المسجل في يافع ون",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "المعرف الفريد للمهني" },
+        "name": { "type": "string", "maxLength": 120, "description": "الاسم الكامل لصاحب المهنة" },
+        "specialty": { "type": "string", "maxLength": 100, "description": "التخصص أو المهنة" },
+        "phone": { "type": "string", "maxLength": 20, "description": "رقم الجوال للتواصل" },
+        "district": { "type": "string", "maxLength": 60, "description": "المديرية في يافع" },
+        "workLocation": { "type": "string", "maxLength": 180, "description": "موقع العمل" },
+        "image": { "type": "string", "description": "رابط صورة المهني" },
+        "approved": { "type": "boolean", "description": "حالة اعتماد الإدارة" },
+        "status": { "type": "string", "description": "حالة السجل الإدارية" },
+        "ownerId": { "type": "string", "description": "معرف صاحب السجل" },
+        "createdAt": { "type": "string", "description": "تاريخ التسجيل" }
+      },
+      "required": ["id", "name", "specialty", "phone", "district", "workLocation", "approved", "createdAt"]
     }
   },
   "firestore": {
@@ -111,6 +191,70 @@
     "/settings/appearance": {
       "schema": "AppearanceSetting",
       "description": "إعدادات المظهر العام والألوان والشعارات والأقسام"
+    },
+    "/settings/exchangeRates": {
+      "schema": "AppearanceSetting",
+      "description": "أسعار الصرف الرسمية المعتمدة لسوق عدن"
+    },
+    "/settings/carousel": {
+      "schema": "AppearanceSetting",
+      "description": "إعدادات ومواضع الإعلانات المتحركة"
+    },
+    "/settings/activityImages": {
+      "schema": "AppearanceSetting",
+      "description": "روابط صور وبنرات الأنشطة التجارية"
+    },
+    "/settings/activitiesConfig": {
+      "schema": "AppearanceSetting",
+      "description": "إعدادات ترتيب وأسماء وإظهار الأنشطة التجارية في الصفحة الرئيسية"
+    },
+    "/settings/remittanceHero": {
+      "schema": "AppearanceSetting",
+      "description": "الصورة الرئيسية لقسم الاستعلام عن الحوالات"
+    },
+    "/usedAds/{adId}": {
+      "schema": "UsedAd",
+      "description": "إعلانات حراج المستعمل المرسلة للمراجعة والنشر"
+    },
+    "/professionals/{profId}": {
+      "schema": "Professional",
+      "description": "سجلات أصحاب المهن والحرفيين المعروضة بعد اعتماد الإدارة"
+    },
+    "/referrals/{referralId}": {
+      "schema": "User",
+      "description": "سجلات برنامج شارك واربح ومكافآت الإحالة"
+    },
+    "/chats/{chatId}": {
+      "schema": "Chat",
+      "description": "المحادثات المباشرة بين الزوار والمتاجر"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Advertisement",
+      "description": "الإشعارات والتنبيهات المرسلة للمستخدمين"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Advertisement",
+      "description": "الأقسام والأنشطة التجارية في المنصة"
+    },
+    "/cities/{cityId}": {
+      "schema": "Establishment",
+      "description": "المدن والمديريات والمديرون المحليون"
+    },
+    "/roles/{roleId}": {
+      "schema": "User",
+      "description": "الأدوار الوظيفية والصلاحيات الإدارية"
+    },
+    "/complaints/{complaintId}": {
+      "schema": "Complaint",
+      "description": "الشكاوى والبلاغات الإدارية"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "Order",
+      "description": "سجل التدقيق للعمليات الإدارية الحساسة"
+    },
+    "/appImages/{slotId}": {
+      "schema": "AppImageSlot",
+      "description": "سجلات إدارة جميع صور التطبيق والبنرات والأيقونات والمحطات والصفحات من لوحة الإدارة"
     }
   }
 }

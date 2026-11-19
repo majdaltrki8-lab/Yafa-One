@@ -6,7 +6,7 @@ function createInitialStore(): Record<string, any[]> {
     admins: [
       {
         id: 'admin-1',
-        email: 'admin@yafaone.com',
+        email: 'majdaltrki8@gmail.com',
         role: 'superadmin',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -170,7 +170,7 @@ function createInitialStore(): Record<string, any[]> {
         establishment: 'سوق القمة',
         amount: 97000,
         currency: 'YER',
-        commission: 2910,
+        commission: 0,
         status: 'مكتمل',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -194,7 +194,7 @@ function createInitialStore(): Record<string, any[]> {
       {
         id: 'audit-1',
         action: 'login',
-        actorEmail: 'admin@yafaone.com',
+        actorEmail: 'majdaltrki8@gmail.com',
         summary: 'تسجيل دخول مدير المنصة',
         status: 'مسجل',
         createdAt: new Date().toISOString(),

@@ -26,7 +26,8 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email == 'majdaltrki8@gmail.com' ||
+        request.auth.token.admin == true ||
+        (request.auth.token.email == 'majdaltrki8@gmail.com' && request.auth.token.email_verified == true) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -35,108 +36,283 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isStoreOwner(estId) {
+      return isSignedIn()
+        && estId is string
+        && exists(/databases/$(database)/documents/establishments/$(estId))
+        && get(/databases/$(database)/documents/establishments/$(estId)).data.ownerId == request.auth.uid;
+    }
+
     // --- Admins Collection ---
     match /admins/{adminId} {
-      allow read: if isSignedIn();
+      allow read: if isOwner(adminId) || isAdmin();
       allow write: if isAdmin();
     }
 
     // --- Users Collection ---
     match /users/{userId} {
       allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
-      
+
       // User can create their own profile, but cannot self-assign role 'admin'
-      allow create: if isOwner(userId) 
+      allow create: if isOwner(userId)
         && incoming().uid == request.auth.uid
         && incoming().role in ['customer', 'owner']
-        && incoming().status in ['active', 'pending'];
-        
-      // User can update their own profile fields, but cannot modify their role or status
-      allow update: if (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status']))
+        && incoming().status in ['active', 'pending']
+        && (!incoming().keys().hasAny(['name']) || (incoming().name is string && incoming().name.size() <= 120))
+        && (!incoming().keys().hasAny(['phoneNumber']) || (incoming().phoneNumber is string && incoming().phoneNumber.size() <= 30));
+
+      // User can update their own profile fields, but cannot modify their role, status, or uid
+      allow update: if (isOwner(userId)
+          && incoming().uid == existing().uid
+          && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status', 'uid']))
         || isAdmin();
-        
+
       allow delete: if isAdmin();
     }
 
     // --- Establishments (Stores) Collection ---
     match /establishments/{establishmentId} {
-      // Public visitors can browse approved and active stores
-      allow read: if true;
-      
+      // Visitors can only read approved establishments; owners and admins can read their pending/all stores
+      allow read: if existing().approved == true
+        || (isSignedIn() && existing().ownerId == request.auth.uid)
+        || isAdmin();
+
       // Store owners can register their establishment; initially approved must be false (pending admin review)
-      allow create: if isSignedIn() 
+      allow create: if isSignedIn()
         && isValidId(establishmentId)
         && incoming().ownerId == request.auth.uid
+        && incoming().name is string && incoming().name.size() >= 2 && incoming().name.size() <= 160
         && (incoming().approved == false || isAdmin());
-        
+
       // Store owner can only update their own store; cannot change approved status or ownerId
-      allow update: if (isSignedIn() 
+      allow update: if (isSignedIn()
           && existing().ownerId == request.auth.uid
           && incoming().ownerId == existing().ownerId
           && !incoming().diff(existing()).affectedKeys().hasAny(['approved', 'ownerId']))
         || isAdmin();
-        
+
       allow delete: if (isSignedIn() && existing().ownerId == request.auth.uid) || isAdmin();
     }
 
     // --- Products Collection ---
     match /products/{productId} {
-      // Public visitors can view products in the marketplace
-      allow read: if true;
-      
-      // Only the owner of the establishment can add, update, or remove products
+      // Visitors can only view approved products; owners and admins can view drafts/unapproved products
+      allow read: if existing().approved == true
+        || (isSignedIn() && (existing().ownerId == request.auth.uid || isStoreOwner(existing().establishmentId)))
+        || isAdmin();
+
+      // Only the owner of the establishment can add products (starts pending admin review unless admin)
       allow create: if isSignedIn()
         && isValidId(productId)
-        && exists(/databases/$(database)/documents/establishments/$(incoming().establishmentId))
-        && (get(/databases/$(database)/documents/establishments/$(incoming().establishmentId)).data.ownerId == request.auth.uid || isAdmin());
-        
-      allow update: if isSignedIn()
-        && (get(/databases/$(database)/documents/establishments/$(existing().establishmentId)).data.ownerId == request.auth.uid || isAdmin());
-        
-      allow delete: if isSignedIn()
-        && (get(/databases/$(database)/documents/establishments/$(existing().establishmentId)).data.ownerId == request.auth.uid || isAdmin());
+        && incoming().establishmentId is string
+        && incoming().price is number && incoming().price >= 0
+        && (
+          (isStoreOwner(incoming().establishmentId)
+            && incoming().ownerId == request.auth.uid
+            && incoming().approved == false)
+          || isAdmin()
+        );
+
+      // Owners can update their products but cannot alter approved, ownerId, or establishmentId
+      allow update: if (isSignedIn()
+          && (existing().ownerId == request.auth.uid || isStoreOwner(existing().establishmentId))
+          && !incoming().diff(existing()).affectedKeys().hasAny(['approved', 'ownerId', 'establishmentId'])
+          && incoming().price is number && incoming().price >= 0)
+        || isAdmin();
+
+      allow delete: if (isSignedIn()
+          && (existing().ownerId == request.auth.uid || isStoreOwner(existing().establishmentId)))
+        || isAdmin();
     }
 
     // --- Orders Collection ---
     match /orders/{orderId} {
-      // Customer who placed order or store owner receiving order can read
       allow read: if isSignedIn() && (
-        resource.data.customerId == request.auth.uid ||
-        (exists(/databases/$(database)/documents/establishments/$(resource.data.establishmentId))
-          && get(/databases/$(database)/documents/establishments/$(resource.data.establishmentId)).data.ownerId == request.auth.uid) ||
+        existing().customerId == request.auth.uid ||
+        isStoreOwner(existing().establishmentId) ||
         isAdmin()
       );
-      
-      // Customer can create an order with status 'pending'
+
+      // Customer creates an order with non-negative numeric total and initial pending status
       allow create: if isSignedIn()
         && isValidId(orderId)
         && incoming().customerId == request.auth.uid
-        && incoming().status == 'pending';
-        
-      // Store owner or customer can update order status
+        && incoming().establishmentId is string
+        && incoming().total is number && incoming().total >= 0
+        && incoming().status in ['pending', 'قيد الانتظار'];
+
+      // Customer can only cancel their own order; store owner can update order fulfillment status
       allow update: if isSignedIn() && (
-        resource.data.customerId == request.auth.uid ||
-        (exists(/databases/$(database)/documents/establishments/$(resource.data.establishmentId))
-          && get(/databases/$(database)/documents/establishments/$(resource.data.establishmentId)).data.ownerId == request.auth.uid) ||
+        (existing().customerId == request.auth.uid
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          && incoming().status in ['cancelled', 'ملغي']) ||
+        (isStoreOwner(existing().establishmentId)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          && incoming().status in ['قيد التجهيز', 'جاري التوصيل', 'مكتمل', 'ملغي', 'confirmed', 'delivering', 'completed', 'cancelled']) ||
         isAdmin()
       );
-      
+
       allow delete: if isAdmin();
     }
 
     // --- Advertisements Collection ---
     match /advertisements/{adId} {
-      // Visitors can read active advertisements
       allow read: if true;
-      // Only admin can create, update, or delete advertisements
       allow write: if isAdmin();
+    }
+
+    // --- Used Marketplace Ads ---
+    match /usedAds/{adId} {
+      allow read: if existing().approved == true
+        || (isSignedIn() && (existing().ownerId == request.auth.uid || existing().sellerId == request.auth.uid))
+        || isAdmin();
+
+      allow create: if isSignedIn()
+        && isValidId(adId)
+        && (incoming().sellerId == request.auth.uid || incoming().ownerId == request.auth.uid)
+        && (incoming().approved == false || isAdmin());
+
+      allow update: if (isSignedIn()
+          && (existing().sellerId == request.auth.uid || existing().ownerId == request.auth.uid)
+          && !incoming().diff(existing()).affectedKeys().hasAny(['approved', 'ownerId', 'sellerId']))
+        || isAdmin();
+
+      allow delete: if (isSignedIn()
+          && (existing().sellerId == request.auth.uid || existing().ownerId == request.auth.uid))
+        || isAdmin();
+    }
+
+    // --- Referrals (Share & Earn) ---
+    match /referrals/{referralId} {
+      allow read: if isSignedIn() && (existing().referrerId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(referralId) && incoming().referrerId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // --- Chats & Messages ---
+    match /chats/{chatId} {
+      allow read: if isSignedIn() && (
+        existing().visitorId == request.auth.uid ||
+        existing().ownerId == request.auth.uid ||
+        isStoreOwner(existing().establishmentId) ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && isValidId(chatId) && (
+        incoming().visitorId == request.auth.uid ||
+        incoming().ownerId == request.auth.uid ||
+        isStoreOwner(incoming().establishmentId)
+      );
+      allow update: if isSignedIn() && (
+        existing().visitorId == request.auth.uid ||
+        existing().ownerId == request.auth.uid ||
+        isStoreOwner(existing().establishmentId) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // --- Notifications, Categories, Cities, Roles, Complaints, Audit Logs ---
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /categories/{catId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /cities/{cityId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /roles/{roleId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /complaints/{complaintId} {
+      allow read: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(complaintId) && incoming().userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    function isValidProfessional(data) {
+      return data.keys().hasAll(['id', 'name', 'specialty', 'phone', 'district', 'workLocation', 'approved', 'createdAt'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
+        && data.specialty is string && data.specialty.size() >= 2 && data.specialty.size() <= 100
+        && data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 20
+        && data.district is string && data.district.size() >= 2 && data.district.size() <= 60
+        && data.workLocation is string && data.workLocation.size() >= 2 && data.workLocation.size() <= 180
+        && data.approved is bool
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 600))
+        && (!data.keys().hasAny(['image']) || (data.image is string && data.image.size() <= 2048));
+    }
+
+    match /professionals/{profId} {
+      allow read: if existing().approved == true
+        || (isSignedIn() && existing().ownerId == request.auth.uid)
+        || isAdmin();
+      allow create: if isValidId(profId)
+        && isValidProfessional(incoming())
+        && (
+          (incoming().approved == false && incoming().status == 'قيد المراجعة'
+            && (incoming().ownerId == 'guest' || (isSignedIn() && incoming().ownerId == request.auth.uid)))
+          || isAdmin()
+        );
+      allow update: if (isAdmin() && isValidId(profId))
+        || (isSignedIn()
+          && existing().ownerId == request.auth.uid
+          && !incoming().diff(existing()).affectedKeys().hasAny(['approved', 'ownerId'])
+          && isValidProfessional(incoming()));
+      allow delete: if isAdmin() || (isSignedIn() && existing().ownerId == request.auth.uid);
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'action', 'section', 'target', 'timestamp'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.action is string && data.action.size() > 0 && data.action.size() <= 160
+        && data.section is string && data.section.size() > 0 && data.section.size() <= 120
+        && data.target is string && data.target.size() > 0 && data.target.size() <= 300
+        && data.timestamp is string && data.timestamp.size() <= 64;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidId(logId) && isValidAuditLog(incoming());
+      allow update, delete: if false;
+    }
+
+    // --- App Images Central Registry ---
+    function isValidAppImageSlot(data) {
+      return data.keys().hasAll(['slotId', 'images', 'updatedAt'])
+        && data.slotId is string
+        && data.slotId.size() > 0 && data.slotId.size() <= 128
+        && data.images is list
+        && data.images.size() <= 25
+        && data.updatedAt is string
+        && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64
+        && (!data.keys().hasAny(['previousImages']) || (data.previousImages is list && data.previousImages.size() <= 25))
+        && (!data.keys().hasAny(['pageName']) || (data.pageName is string && data.pageName.size() <= 200))
+        && (!data.keys().hasAny(['placementLabel']) || (data.placementLabel is string && data.placementLabel.size() <= 300))
+        && (!data.keys().hasAny(['updatedBy']) || (data.updatedBy is string && data.updatedBy.size() <= 200));
+    }
+
+    match /appImages/{slotId} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && isValidId(slotId)
+        && incoming().slotId == slotId
+        && isValidAppImageSlot(incoming());
+      allow delete: if isAdmin() && isValidId(slotId);
     }
 
     // --- App Settings & Appearance Collection ---
     match /settings/{settingId} {
-      // Visitors can read public appearance and app configuration
       allow read: if true;
-      // Only admin can modify appearance and settings
       allow write: if isAdmin();
     }
   }

@@ -32,7 +32,9 @@ const validVisitorSections = new Set([
   'maintenance',
   'exchange',
   'offers',
+  'promotions',
   'ads',
+  'professionals',
 ])
 
 export default async function VisitorSectionPage({

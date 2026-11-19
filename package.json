@@ -8,7 +8,8 @@
     "build": "node scripts/build.mjs",
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "tsc --noEmit",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "generate:importmap": "payload generate:importmap"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.0",
@@ -37,6 +38,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.28.2",
     "oxfmt": "^0.2.0",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.0.0",

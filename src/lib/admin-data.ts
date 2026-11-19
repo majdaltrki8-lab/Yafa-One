@@ -65,7 +65,7 @@ function toRow(doc: Record<string, unknown>): AdminRow {
 export async function getAdminSnapshot(section: string): Promise<AdminSnapshot> {
   try {
     const payload = await getPayload({ config })
-    let adminEmail = 'admin@yafaone.com'
+    let adminEmail = 'majdaltrki8@gmail.com'
 
     try {
       const headerList = await headers()
@@ -74,8 +74,7 @@ export async function getAdminSnapshot(section: string): Promise<AdminSnapshot> 
         adminEmail = String(user.email)
       }
     } catch {
-      // In development or preview without auth cookie, use preview admin
-      adminEmail = 'admin@yafaone.com'
+      adminEmail = 'majdaltrki8@gmail.com'
     }
 
     const countSlugs = ['users', 'establishments', 'products', 'orders', 'advertisements', 'payments']
@@ -132,7 +131,7 @@ export async function getAdminSnapshot(section: string): Promise<AdminSnapshot> 
   } catch (error) {
     console.error('Database connection error in getAdminSnapshot:', error)
     return {
-      adminEmail: 'admin@yafaone.com',
+      adminEmail: 'majdaltrki8@gmail.com',
       counts: { users: 0, establishments: 0, products: 0, orders: 0, advertisements: 0, payments: 0 },
       rows: [],
       section,

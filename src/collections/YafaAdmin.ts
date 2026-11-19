@@ -187,8 +187,7 @@ export const Products: CollectionConfig = {
   ],
 }
 
-const calculateCommission: FieldHook = ({ siblingData }) =>
-  siblingData.status === 'completed' ? Number(siblingData.total || 0) * 0.03 : 0
+const calculateCommission: FieldHook = () => 0
 
 export const Orders: CollectionConfig = {
   slug: 'orders',
@@ -221,7 +220,7 @@ export const Orders: CollectionConfig = {
     },
     { name: 'paymentMethod', label: 'طريقة الدفع', type: 'select', options: ['cash', 'electronic'] },
     { name: 'paymentStatus', label: 'حالة الدفع', type: 'select', options: ['pending', 'paid', 'refunded'] },
-    { name: 'commission', label: 'عمولة المنصة 3%', type: 'number', hooks: { beforeChange: [calculateCommission] }, admin: { readOnly: true } },
+    { name: 'commission', label: 'عمولة المنصة 0%', type: 'number', hooks: { beforeChange: [calculateCommission] }, admin: { readOnly: true } },
   ],
 }
 

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { verifySessionToken } from '@/lib/session'
 
 const adminSections = new Set([
   'dashboard',
@@ -23,39 +24,61 @@ const adminSections = new Set([
   'settings',
   'backup',
   'audit',
+  'cities',
+  'complaints',
+  'used',
+  'vehicles',
+  'categories',
+  'professionals',
+  'appearance',
+  'app-images',
 ])
 
-const legacyAdminSections = new Set([
-  'carousel',
-  'activity-images',
-  'exchange-rates',
-  'referrals',
-  'backup',
-])
+const payloadAdminPrefixes = [
+  '/admin/collections',
+  '/admin/globals',
+  '/admin/login',
+  '/admin/logout',
+  '/admin/account',
+  '/admin/create-first-user',
+  '/admin/forgot',
+  '/admin/reset',
+]
 
-export function proxy(request: NextRequest) {
-  const { pathname, searchParams } = request.nextUrl
+export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
   const roleCookie = request.cookies.get('yafa-role')?.value
+  const session = await verifySessionToken(request.cookies.get('yafa-session')?.value)
 
-  // Review frames and audit tools must always route to legacy app
-  if (searchParams.has('reviewToken')) {
-    return NextResponse.rewrite(new URL('/legacy', request.url))
+  const hasPayloadSession = roleCookie === 'admin' && request.cookies.has('payload-token')
+  const hasVerifiedAdminSession = session?.role === 'admin'
+
+  // Protect internal audit, review-board, and management routes behind verified Admin session
+  if (
+    pathname.startsWith('/management') ||
+    pathname === '/audit' ||
+    pathname === '/review-board'
+  ) {
+    if (!hasVerifiedAdminSession && !hasPayloadSession) {
+      const loginUrl = new URL('/auth/admin-login', request.url)
+      loginUrl.searchParams.set('return', pathname)
+      return NextResponse.redirect(loginUrl)
+    }
+    return NextResponse.next()
   }
-
 
   // Owner Portal Routes
   if (pathname.startsWith('/owner')) {
     // Signup flow is accessible to visitors wishing to register
     if (
       pathname === '/owner/signup' ||
-      pathname === '/owner/establishment' ||
       pathname === '/owner/submitted'
     ) {
       return NextResponse.next()
     }
 
-    // Protected owner routes: require owner role
-    if (roleCookie !== 'owner') {
+    // Protected owner routes: require verified owner session
+    if (session?.role !== 'owner') {
       const loginUrl = new URL('/auth/owner-login', request.url)
       loginUrl.searchParams.set('return', pathname)
       return NextResponse.redirect(loginUrl)
@@ -66,23 +89,23 @@ export function proxy(request: NextRequest) {
 
   // Admin Portal Routes
   if (pathname.startsWith('/admin')) {
+    if (
+      pathname === '/admin' ||
+      payloadAdminPrefixes.some((prefix) => pathname.startsWith(prefix))
+    ) {
+      return NextResponse.next()
+    }
+
     const section = pathname.split('/')[2] || 'dashboard'
 
-    // Protected admin routes: require admin role AND valid server-side session token (payload-token)
-    const hasServerSession = request.cookies.has('payload-token')
-    if (roleCookie !== 'admin' || !hasServerSession) {
+    if (!hasVerifiedAdminSession && !hasPayloadSession) {
       const loginUrl = new URL('/auth/admin-login', request.url)
       loginUrl.searchParams.set('return', pathname)
       return NextResponse.redirect(loginUrl)
     }
 
-    // Interactive modules with local state reside in legacy app
-    if (legacyAdminSections.has(section)) {
-      return NextResponse.rewrite(new URL('/legacy', request.url))
-    }
-
     if (adminSections.has(section)) {
-      return NextResponse.rewrite(new URL(`/management/${section}`, request.url))
+      return NextResponse.rewrite(new URL('/legacy', request.url))
     }
 
     return NextResponse.redirect(new URL('/admin/dashboard', request.url))
@@ -95,6 +118,7 @@ export const config = {
   matcher: [
     '/auth/:path*',
     '/admin/:path*',
+    '/management/:path*',
     '/entry',
     '/audit',
     '/review-board',
@@ -103,4 +127,3 @@ export const config = {
     '/owner/:path*',
   ],
 }
-

@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     const res = registerPhoneAccountWithOtp({
       phoneRaw: String(body?.phone || ''),
       password: String(body?.password || ''),
-      otpCode: String(body?.otpCode || ''),
+      otpCode: String(body?.otpCode || body?.otp || ''),
       role,
       name: String(body?.name || ''),
       establishmentName: body?.establishmentName ? String(body.establishmentName) : undefined,
@@ -67,6 +67,13 @@ export async function POST(req: NextRequest) {
         sameSite: 'lax',
         path: '/',
         maxAge: 60 * 60 * 24 * 30,
+      })
+    } else {
+      response.cookies.set('yafa-role', '', {
+        httpOnly: false,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 0,
       })
     }
 

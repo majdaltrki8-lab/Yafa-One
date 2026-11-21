@@ -530,9 +530,7 @@ export function registerPhoneAccountWithOtp(params: {
   if (cleanName.length < 2) {
     return { ok: false, status: 400, error: 'الاسم الكامل مطلوب.' }
   }
-  if (params.role === 'owner' && String(params.establishmentName || '').trim().length < 2) {
-    return { ok: false, status: 400, error: 'اسم المنشأة أو المتجر مطلوب.' }
-  }
+  const cleanEstName = String(params.establishmentName || '').trim()
 
   const db = loadDb()
   const userKey = `${params.role}:${normalized.e164}`
@@ -558,7 +556,7 @@ export function registerPhoneAccountWithOtp(params: {
     phoneLocal: normalized.local,
     name: cleanName,
     establishmentId: estId,
-    establishmentName: params.role === 'owner' ? String(params.establishmentName).trim() : undefined,
+    establishmentName: params.role === 'owner' ? cleanEstName || `منشأة ${cleanName}` : undefined,
     district: params.district || 'لبعوس',
     activity: params.activity || 'متجر تجاري',
     passwordSalt: salt,

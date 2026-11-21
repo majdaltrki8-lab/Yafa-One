@@ -127,7 +127,7 @@ export const ACTIVITY_DEFS: Array<{
   { id: 'maintenance', name: 'الورش والصيانة', path: '/visitor/maintenance', iconKey: 'Wrench', cardUrl: '/assets/activities/maintenance.jpg', bannerUrl: '/assets/activity-banners/maintenance.jpg' },
   { id: 'used', name: 'حراج المستعمل', path: '/visitor/used', iconKey: 'Package', cardUrl: '/assets/activities/used.jpg', bannerUrl: '/assets/activity-banners/used.jpg' },
   { id: 'exchange', name: 'الصرافة والتحويلات', path: '/visitor/exchange', iconKey: 'Landmark', cardUrl: '/assets/activities/exchange.jpg', bannerUrl: '/assets/activity-banners/exchange.jpg' },
-  { id: 'professionals', name: 'أصحاب المهن', path: '/visitor/professionals', iconKey: 'Wrench', cardUrl: '/assets/activities/maintenance.jpg', bannerUrl: '/assets/activity-banners/maintenance.jpg' },
+  { id: 'professionals', name: 'أصحاب المهن', path: '/visitor/professionals', iconKey: 'Wrench', cardUrl: '/assets/aistudio/file_000000009dfc8210a5ae82f9f4fd9107_aff3db0e.png', bannerUrl: '/assets/activity-banners/maintenance.jpg' },
 ]
 
 export const DEFAULT_HOME_ACTIVITIES: HomeActivityConfigItem[] = ACTIVITY_DEFS.map((a, idx) => ({
@@ -214,7 +214,7 @@ export const APP_IMAGE_SLOTS: AppImageSlotDef[] = [
     recommendedDimensions: '1280 × 720',
     allowMultiple: true,
     defaultImages: [
-      makeDefaultEntry('carousel-1', '/assets/carousel/welcome.jpg', 'مرحبًا بكم في يافع ون', 1, true, '/visitor/stores'),
+      makeDefaultEntry('carousel-1', '/assets/yafa-banner-clean.jpg', 'يافع ون', 1, true, '/visitor/stores'),
       makeDefaultEntry('carousel-2', '/assets/carousel/marketplace.jpg', 'عروض المواد الغذائية والسوبرماركت', 2, false, '/visitor/groceries'),
       makeDefaultEntry('carousel-3', '/assets/carousel/services.jpg', 'محلات مواد البناء والألمنيوم', 3, false, '/visitor/building'),
       makeDefaultEntry('carousel-4', '/assets/carousel/cars-property.jpg', 'السيارات والعقارات وحراج المستعمل', 4, false, '/visitor/vehicles'),

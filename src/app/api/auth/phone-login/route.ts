@@ -73,6 +73,13 @@ export async function POST(req: NextRequest) {
         path: '/',
         maxAge: 60 * 60 * 24 * 30,
       })
+    } else {
+      response.cookies.set('yafa-role', '', {
+        httpOnly: false,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 0,
+      })
     }
 
     return response

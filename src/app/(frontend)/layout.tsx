@@ -51,13 +51,16 @@ export default function RootLayout({
   const language = sanitizeHtmlAttribute(makeSiteSettings.language) || "ar"
   const addBypassLinks = makeSiteSettings.accessibility?.addBypassLinks === true
   const customScripts = makeSiteSettings.customScripts
+  const hasCustomHead = Boolean(customScripts?.headStart || customScripts?.headEnd)
 
   return (
     <html lang={language} dir="rtl">
-      <head>
-        {renderHeadCustomCode(customScripts?.headStart, "head-start")}
-        {renderHeadCustomCode(customScripts?.headEnd, "head-end")}
-      </head>
+      {hasCustomHead && (
+        <head>
+          {renderHeadCustomCode(customScripts?.headStart, "head-start")}
+          {renderHeadCustomCode(customScripts?.headEnd, "head-end")}
+        </head>
+      )}
       <body className="min-h-screen bg-white text-zinc-950 antialiased">
         <BodyCustomCode html={customScripts?.bodyStart} />
         {addBypassLinks && (

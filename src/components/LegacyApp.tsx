@@ -2,8 +2,8 @@
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, BarChart3, Bell, Box, Building2, Car, Check, ChevronDown, ChevronLeft, CircleDollarSign,
-  CalendarDays, ClipboardList, Crown, Download, Droplets, Eye, FileSpreadsheet, FileText, Flame, Fuel, Gift, GlassWater,
+  AlertTriangle, BarChart3, Bell, Box, Building2, Calculator, Car, Check, ChevronDown, ChevronLeft, CircleDollarSign,
+  CalendarDays, ClipboardList, Clock, Crown, Download, Droplets, Eye, EyeOff, FileSpreadsheet, FileText, Flame, Fuel, Gift, GlassWater,
   Grid2X2, Heart, Home, Image, KeyRound, Landmark, LayoutDashboard, LockKeyhole, LogOut, MapPin,
   Megaphone, Menu, MessageCircle, Navigation, Package, Pencil, Phone, Pill, Plus, RefreshCw, Search, Settings, Share2, ShieldCheck,
   ShoppingBag, ShoppingCart, SlidersHorizontal, Sparkles, Stethoscope, Store, Tag, Trash2, Truck, Upload,
@@ -36,6 +36,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   setDoc,
   updateDoc,
@@ -113,6 +114,7 @@ type ExchangeRateData = {
   updatedAt: string;
   adminName?: string;
   autoUpdateEnabled?: boolean;
+  approved?: boolean;
   history?: Array<{ timestamp: string; adminName: string; source: string; summary: string }>;
 };
 
@@ -247,22 +249,50 @@ async function uploadImageWithFallback(file: File, storagePath: string): Promise
 }
 
 async function shareOrCopy(title: string, text: string, url: string) {
+  const safeTarget = (url || (typeof window !== "undefined" ? window.location.href : "")).trim();
+  const isHttpUrl = /^https?:\/\//i.test(safeTarget);
+
   if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
     try {
-      await navigator.share({ title, text, url });
+      await navigator.share(isHttpUrl ? { title, text, url: safeTarget } : { title, text: `${text}${safeTarget ? ` — ${safeTarget}` : ""}` });
       return;
-    } catch {
-      // Fall back to clipboard if user/browser doesn't complete Web Share
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      // Fall back to clipboard if Web Share is unavailable/blocked inside iframe
     }
   }
+
   try {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      await navigator.clipboard.writeText(url);
+    if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(safeTarget);
       toastMessage("تم نسخ الرابط بنجاح");
       return;
     }
-  } catch {}
-  toastMessage(`الرابط: ${url}`);
+  } catch {
+    // Continue to legacy textarea execCommand fallback for sandboxed iframes
+  }
+
+  if (typeof document !== "undefined" && safeTarget) {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = safeTarget;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-9999px";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (copied) {
+        toastMessage("تم نسخ الرابط بنجاح");
+        return;
+      }
+    } catch {}
+  }
+
+  toastMessage(`انسخ الرابط يدوياً: ${safeTarget}`);
 }
 
 function getArabicAuthError(err: any): string {
@@ -307,7 +337,7 @@ async function clearServerAndFirebaseSession() {
 }
 
 const defaultCarouselAds: CarouselAd[] = [
-  { id: 1, title: "مرحبًا بكم في يافع ون", description: "السوق التجاري الشامل في يافع", image: "/assets/carousel/welcome.jpg", route: "/visitor/stores", active: true, order: 1, startsAt: "", endsAt: "" },
+  { id: 1, title: "يافع ون", description: "يافع ون", image: "/assets/yafa-banner-clean.jpg", route: "/visitor/stores", active: true, order: 1, startsAt: "", endsAt: "" },
   { id: 2, title: "عروض المواد الغذائية والسوبرماركت", description: "احتياجات البيت من متاجر يافع", image: "/assets/carousel/marketplace.jpg", route: "/visitor/groceries", active: true, order: 2, startsAt: "", endsAt: "" },
   { id: 3, title: "محلات مواد البناء والألمنيوم", description: "مواد وخدمات موثوقة لمشروعك", image: "/assets/carousel/services.jpg", route: "/visitor/building", active: true, order: 3, startsAt: "", endsAt: "" },
   { id: 4, title: "محطات الوقود والخدمات", description: "الأسعار والمواقع داخل يافع", image: "/assets/carousel/fuel-services.jpg", route: "/visitor/fuel", active: true, order: 6, startsAt: "", endsAt: "" },
@@ -422,16 +452,86 @@ const DEFAULT_EXCHANGE_RATES: ExchangeRateData = {
   history: [],
 };
 
-function loadExchangeRates(): ExchangeRateData {
-  if (typeof window === "undefined") return DEFAULT_EXCHANGE_RATES;
+function normalizeRateUpdatedAt(val: any): string {
+  if (!val) return "";
+  try {
+    if (typeof val === "string") {
+      const d = new Date(val);
+      return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+    }
+    if (typeof val?.toDate === "function") {
+      const d = val.toDate();
+      return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+    }
+    if (typeof val?.seconds === "number") {
+      const d = new Date(val.seconds * 1000);
+      return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+    }
+  } catch {}
+  return "";
+}
+
+function normalizeApprovedRateDoc(data: any): ExchangeRateData | null {
+  if (!data || typeof data !== "object") return null;
+  if (data.approved !== true) return null;
+  const sarBuy = Number(data?.rates?.SAR?.buy);
+  const sarSell = Number(data?.rates?.SAR?.sell);
+  const usdBuy = Number(data?.rates?.USD?.buy);
+  const usdSell = Number(data?.rates?.USD?.sell);
+  const updatedAt = normalizeRateUpdatedAt(data.updatedAt);
+  if (
+    !updatedAt ||
+    updatedAt === "2026-01-01T00:00:00.000Z" ||
+    ![sarBuy, sarSell, usdBuy, usdSell].every((value) => Number.isFinite(value) && value > 0)
+  ) {
+    return null;
+  }
+  return {
+    ...data,
+    rates: {
+      SAR: {
+        buy: sarBuy,
+        sell: sarSell,
+        prevBuy: Number.isFinite(Number(data?.rates?.SAR?.prevBuy)) ? Number(data.rates.SAR.prevBuy) : sarBuy,
+        prevSell: Number.isFinite(Number(data?.rates?.SAR?.prevSell)) ? Number(data.rates.SAR.prevSell) : sarSell,
+      },
+      USD: {
+        buy: usdBuy,
+        sell: usdSell,
+        prevBuy: Number.isFinite(Number(data?.rates?.USD?.prevBuy)) ? Number(data.rates.USD.prevBuy) : usdBuy,
+        prevSell: Number.isFinite(Number(data?.rates?.USD?.prevSell)) ? Number(data.rates.USD.prevSell) : usdSell,
+      },
+    },
+    source: typeof data.source === "string" && data.source.trim() ? data.source.trim() : "الإدارة — Firebase",
+    updatedAt,
+    approved: true,
+  };
+}
+
+function isValidApprovedRateDoc(data: any): data is ExchangeRateData {
+  return normalizeApprovedRateDoc(data) !== null;
+}
+
+function formatRateTimestamp(updatedAt?: string, dateStyle: "short" | "medium" = "short"): string {
+  if (!updatedAt) return "غير متاح";
+  try {
+    const d = new Date(updatedAt);
+    if (Number.isNaN(d.getTime())) return "غير متاح";
+    return new Intl.DateTimeFormat("ar-YE", { dateStyle, timeStyle: "short" }).format(d);
+  } catch {
+    return "غير متاح";
+  }
+}
+
+function loadExchangeRates(): ExchangeRateData | null {
+  if (typeof window === "undefined") return null;
   try {
     const raw = safeStorage.getItem(exchangeRateStorageKey);
-    if (!raw) return DEFAULT_EXCHANGE_RATES;
-    const data = JSON.parse(raw) as ExchangeRateData;
-    const values = [data.rates.SAR.buy, data.rates.SAR.sell, data.rates.USD.buy, data.rates.USD.sell];
-    return data.source && data.updatedAt && values.every((value) => Number.isFinite(value) && value > 0) ? data : DEFAULT_EXCHANGE_RATES;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeApprovedRateDoc(parsed);
   } catch {
-    return DEFAULT_EXCHANGE_RATES;
+    return null;
   }
 }
 
@@ -653,6 +753,121 @@ function Entry() {
   </main>;
 }
 
+function formatYemeniSubmitPhone(raw: string): string {
+  const ascii = raw
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+  const cleaned = ascii.replace(/[\s\-()]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+967")) return cleaned;
+  if (cleaned.startsWith("00967")) return `+967${cleaned.slice(5)}`;
+  if (cleaned.startsWith("967") && cleaned.length >= 12) return `+${cleaned}`;
+  const local = cleaned.startsWith("0") ? cleaned.slice(1) : cleaned;
+  return `+967${local}`;
+}
+
+function YafaAuthScreenFrame({
+  title,
+  onBack,
+  children,
+}: {
+  title: string;
+  onBack: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <main className="yafa-auth-page" dir="rtl">
+      <div className="yafa-auth-card">
+        <header className="yafa-auth-header">
+          <button type="button" className="yafa-auth-back-btn" aria-label="رجوع" onClick={onBack}>
+            <ChevronLeft size={26} strokeWidth={2.4} />
+          </button>
+          <h1 className="yafa-auth-title">{title}</h1>
+        </header>
+        <div className="yafa-auth-divider" />
+        <div className="yafa-auth-body">{children}</div>
+        <div className="yafa-auth-dunes" aria-hidden="true">
+          <div className="yafa-auth-dune-back" />
+          <div className="yafa-auth-dune-mid" />
+          <div className="yafa-auth-dune-accent" />
+          <div className="yafa-auth-dune-accent-right" />
+          <div className="yafa-auth-dune-front" />
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function YafaPhonePrefixInput({
+  value,
+  onChange,
+  placeholder = "",
+  autoComplete = "tel-national",
+  required = true,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  autoComplete?: string;
+  required?: boolean;
+}) {
+  return (
+    <div className="yafa-auth-phone-box">
+      <span className="yafa-auth-phone-prefix" dir="ltr">+967</span>
+      <input
+        type="tel"
+        inputMode="tel"
+        dir="ltr"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        required={required}
+      />
+    </div>
+  );
+}
+
+function YafaPasswordField({
+  value,
+  onChange,
+  placeholder = "",
+  minLength = 6,
+  autoComplete = "current-password",
+  required = true,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  minLength?: number;
+  autoComplete?: string;
+  required?: boolean;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="yafa-auth-pass-box">
+      <input
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        minLength={minLength}
+        autoComplete={autoComplete}
+        required={required}
+      />
+      <button
+        type="button"
+        className="yafa-auth-eye-btn"
+        onClick={() => setVisible((prev) => !prev)}
+        aria-label={visible ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+        aria-pressed={visible}
+      >
+        {visible ? <EyeOff size={20} /> : <Eye size={20} />}
+      </button>
+    </div>
+  );
+}
+
 function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role) => void }) {
   // Admin fields
   const [email, setEmail] = useState("");
@@ -668,12 +883,16 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
   const [error, setError] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
   const [returnUrl, setReturnUrl] = useState<string | null>(null);
+  const [activeOwnerPhone, setActiveOwnerPhone] = useState("");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       setReturnUrl(new URLSearchParams(window.location.search).get("return"));
+      if (kind === "owner" && safeStorage.getItem("yafa-role") === "owner") {
+        setActiveOwnerPhone(safeStorage.getItem("yafa-owner-phone") || "حساب صاحب المنشأة");
+      }
     }
-  }, []);
+  }, [kind]);
 
   const completeAdminLogin = async (verifiedEmail: string, firebaseIdToken: string) => {
     const res = await fetch("/api/session", {
@@ -765,7 +984,8 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
 
   const submitOwnerLogin = async (e: FormEvent) => {
     e.preventDefault();
-    if (!phone.trim() || password.length < 6) {
+    const formattedPhone = formatYemeniSubmitPhone(phone);
+    if (!formattedPhone || password.length < 6) {
       return setError("أدخل رقم الجوال اليمني وكلمة المرور (6 أحرف على الأقل).");
     }
     setError("");
@@ -776,7 +996,7 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
         credentials: "include",
-        body: JSON.stringify({ role: "owner", phone: phone.trim(), password }),
+        body: JSON.stringify({ role: "owner", phone: formattedPhone, password }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.success) {
@@ -808,9 +1028,10 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
         } catch {}
       }
 
+      safeStorage.removeItem("yafa-visitor-auth");
       setRole("owner");
       safeStorage.setItem("yafa-role", "owner");
-      safeStorage.setItem("yafa-owner-phone", json.user?.phone || phone.trim());
+      safeStorage.setItem("yafa-owner-phone", json.user?.phone || formattedPhone);
       if (json.user?.name) safeStorage.setItem("yafa-draft-owner-name", json.user.name);
       if (typeof document !== "undefined") {
         document.cookie = "yafa-role=owner; path=/; max-age=2592000; SameSite=Lax";
@@ -826,7 +1047,8 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
   };
 
   const sendOwnerResetOtp = async () => {
-    if (!phone.trim()) return setError("أدخل رقم الجوال اليمني أولاً.");
+    const formattedPhone = formatYemeniSubmitPhone(phone);
+    if (!formattedPhone) return setError("أدخل رقم الجوال اليمني أولاً.");
     setError("");
     setInfoMsg("");
     setResetLoading(true);
@@ -835,7 +1057,7 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
         credentials: "include",
-        body: JSON.stringify({ role: "owner", phone: phone.trim(), purpose: "reset" }),
+        body: JSON.stringify({ role: "owner", phone: formattedPhone, purpose: "reset" }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.success) {
@@ -853,7 +1075,8 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
 
   const submitOwnerReset = async (e: FormEvent) => {
     e.preventDefault();
-    if (!phone.trim() || !otp.trim() || newPassword.length < 6) {
+    const formattedPhone = formatYemeniSubmitPhone(phone);
+    if (!formattedPhone || !otp.trim() || newPassword.length < 6) {
       return setError("أدخل رقم الجوال، رمز التحقق من واتساب (6 أرقام)، وكلمة مرور جديدة (6 أحرف على الأقل).");
     }
     setError("");
@@ -864,7 +1087,7 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
         credentials: "include",
-        body: JSON.stringify({ role: "owner", phone: phone.trim(), otp: otp.trim(), newPassword }),
+        body: JSON.stringify({ role: "owner", phone: formattedPhone, otpCode: otp.trim(), newPassword }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.success) {
@@ -882,6 +1105,15 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOwnerLogout = async () => {
+    await clearServerAndFirebaseSession();
+    safeStorage.removeItem("yafa-role");
+    safeStorage.removeItem("yafa-owner-phone");
+    setRole(null);
+    setActiveOwnerPhone("");
+    toastMessage("تم تسجيل الخروج من حساب صاحب المنشأة");
   };
 
   const appImages = useAppImages();
@@ -921,60 +1153,154 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
     </main>;
   }
 
-  return <main className="auth-page">
-    <TopBar back="/" />
-    <div className="auth-shell">
-      {authBanner && authBanner !== hero && (
-        <img
-          src={authBanner}
-          alt="يافع ون"
-          style={{ width: "100%", height: "110px", objectFit: "cover", borderRadius: "14px", marginBottom: "10px" }}
-          onError={(e) => { e.currentTarget.style.display = "none"; }}
-        />
-      )}
-      <Brand />
-      <span className="eyebrow">بوابة صاحب المنشأة</span>
-      <h1>{ownerMode === "login" ? "دخول صاحب المنشأة" : "استعادة كلمة مرور المنشأة"}</h1>
-      <p>{ownerMode === "login" ? "الدخول برقم الجوال وكلمة المرور" : "التحقق عبر واتساب OTP لإعادة تعيين كلمة المرور"}</p>
+  if (activeOwnerPhone) {
+    return (
+      <YafaAuthScreenFrame title="دخول صاحب المنشأة" onBack={() => route("/")}>
+        <div className="yafa-auth-form">
+          <div className="alert success">
+            <Check />
+            <span>جلسة صاحب المنشأة نشطة حالياً (<b dir="ltr">{activeOwnerPhone}</b>)</span>
+          </div>
+          <button
+            type="button"
+            className="yafa-auth-primary-btn"
+            onClick={() => route(returnUrl && returnUrl.startsWith("/owner/") ? returnUrl : "/owner/dashboard")}
+          >
+            الانتقال إلى لوحة المنشأة
+          </button>
+          <div className="yafa-auth-links-stack">
+            <button type="button" className="yafa-auth-gold-link" onClick={handleOwnerLogout}>
+              تسجيل الخروج
+            </button>
+            <button type="button" className="yafa-auth-gold-link" onClick={() => route("/visitor/home")}>
+              متابعة كزائر
+            </button>
+          </div>
+        </div>
+      </YafaAuthScreenFrame>
+    );
+  }
+
+  return (
+    <YafaAuthScreenFrame
+      title={ownerMode === "login" ? "دخول صاحب المنشأة" : "استعادة كلمة المرور"}
+      onBack={() => {
+        if (ownerMode === "reset") {
+          setError("");
+          setInfoMsg("");
+          setOtpSent(false);
+          setOwnerMode("login");
+        } else {
+          route("/");
+        }
+      }}
+    >
       {error && <div className="alert error"><AlertTriangle />{error}</div>}
       {infoMsg && <div className="alert success"><Check />{infoMsg}</div>}
       {ownerMode === "login" ? (
-        <form onSubmit={submitOwnerLogin}>
-          <label>رقم الجوال *<input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="77xxxxxxx أو 9677xxxxxxxx" required /></label>
-          <label>كلمة المرور *<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" minLength={6} required /></label>
-          <div className="form-row">
-            <label className="check"><input type="checkbox" defaultChecked /> تذكرني</label>
-            <button type="button" className="text-link" onClick={() => { setError(""); setInfoMsg(""); setOwnerMode("reset"); }}>
-              نسيت كلمة المرور؟
+        <form className="yafa-auth-form" onSubmit={submitOwnerLogin}>
+          <label className="yafa-auth-label">
+            رقم الجوال
+            <YafaPhonePrefixInput value={phone} onChange={setPhone} />
+          </label>
+          <label className="yafa-auth-label">
+            كلمة المرور
+            <YafaPasswordField value={password} onChange={setPassword} minLength={6} autoComplete="current-password" />
+          </label>
+          <button
+            type="button"
+            className="yafa-auth-gold-link"
+            onClick={() => {
+              setError("");
+              setInfoMsg("");
+              setOtp("");
+              setOtpSent(false);
+              setOwnerMode("reset");
+            }}
+          >
+            نسيت كلمة المرور؟
+          </button>
+          <button type="submit" className="yafa-auth-primary-btn" disabled={loading}>
+            {loading ? <><span className="spinner" /> جارٍ الدخول...</> : "دخول"}
+          </button>
+          <div className="yafa-auth-links-stack">
+            <button type="button" className="yafa-auth-gold-link" onClick={() => route("/owner/signup")}>
+              إنشاء حساب
+            </button>
+            <button type="button" className="yafa-auth-gold-link" onClick={() => route("/visitor/home")}>
+              متابعة كزائر
             </button>
           </div>
-          <Button type="submit" disabled={loading}>{loading ? <><span className="spinner" /> جارٍ التحقق...</> : <><LockKeyhole /> تسجيل الدخول</>}</Button>
         </form>
       ) : (
-        <form onSubmit={submitOwnerReset}>
-          <label>رقم الجوال المسجل *<input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="77xxxxxxx" required /></label>
-          <Button type="button" kind="outline" disabled={resetLoading} onClick={sendOwnerResetOtp}>
-            {resetLoading ? "جارٍ الإرسال..." : otpSent ? "إعادة إرسال رمز واتساب" : "إرسال رمز التحقق عبر واتساب"}
-          </Button>
-          {otpSent && (
+        <form className="yafa-auth-form" onSubmit={submitOwnerReset}>
+          <label className="yafa-auth-label">
+            رقم الجوال
+            <YafaPhonePrefixInput value={phone} onChange={setPhone} />
+          </label>
+          {!otpSent ? (
+            <button
+              type="button"
+              className="yafa-auth-primary-btn"
+              disabled={resetLoading}
+              onClick={sendOwnerResetOtp}
+            >
+              {resetLoading ? <><span className="spinner" /> جارٍ الإرسال...</> : "إرسال رمز التحقق"}
+            </button>
+          ) : (
             <>
-              <label>رمز التحقق المرسل عبر واتساب (6 أرقام) *<input type="text" inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="123456" required /></label>
-              <label>كلمة المرور الجديدة (6 أحرف على الأقل) *<input type="password" minLength={6} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="••••••••" required /></label>
-              <Button type="submit" disabled={loading}>{loading ? "جارٍ التحديث..." : "تحديث كلمة المرور"}</Button>
+              <label className="yafa-auth-label">
+                رمز التحقق عبر واتساب
+                <input
+                  className="yafa-auth-input text-center tracking-[0.35em]"
+                  type="text"
+                  inputMode="numeric"
+                  dir="ltr"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  placeholder="••••••"
+                  required
+                />
+              </label>
+              <label className="yafa-auth-label">
+                كلمة المرور الجديدة
+                <YafaPasswordField value={newPassword} onChange={setNewPassword} minLength={6} autoComplete="new-password" />
+              </label>
+              <button type="submit" className="yafa-auth-primary-btn" disabled={loading}>
+                {loading ? <><span className="spinner" /> جارٍ التحديث...</> : "تحديث كلمة المرور"}
+              </button>
+              <button
+                type="button"
+                className="yafa-auth-gold-link"
+                disabled={resetLoading}
+                onClick={sendOwnerResetOtp}
+              >
+                {resetLoading ? "جارٍ الإرسال..." : "إعادة إرسال رمز التحقق"}
+              </button>
             </>
           )}
-          <button type="button" className="text-link" onClick={() => { setError(""); setInfoMsg(""); setOwnerMode("login"); }}>
-            العودة لتسجيل الدخول
-          </button>
+          <div className="yafa-auth-links-stack">
+            <button
+              type="button"
+              className="yafa-auth-gold-link"
+              onClick={() => {
+                setError("");
+                setInfoMsg("");
+                setOtpSent(false);
+                setOwnerMode("login");
+              }}
+            >
+              العودة لتسجيل الدخول
+            </button>
+          </div>
         </form>
       )}
-      <p>ليس لديك حساب؟ <button className="text-link" onClick={() => route("/owner/signup")}>سجّل منشأتك مجاناً</button></p>
-      <div className="prototype-note"><ShieldCheck /> جلسة محمية بتحقق الخادم وبرقم الجوال وكلمة المرور.</div>
-    </div>
-  </main>;
+    </YafaAuthScreenFrame>
+  );
 }
 
-function VisitorLoginPrompt() {
+function VisitorLoginPrompt({ setRole }: { setRole: (role: Role) => void }) {
   const [mode, setMode] = useState<"login" | "register" | "reset">("login");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -991,13 +1317,21 @@ function VisitorLoginPrompt() {
 
   useEffect(() => {
     setLoggedPhone(safeStorage.getItem("yafa-visitor-auth") || "");
-    const requestedReturn = new URLSearchParams(window.location.search).get("return");
+    const params = new URLSearchParams(window.location.search);
+    const requestedReturn = params.get("return");
+    const requestedMode = params.get("mode");
+    if (requestedMode === "register" || requestedMode === "reset") {
+      setMode(requestedMode);
+    }
     const pathStr = window.location.pathname;
     setReturnTo(pathStr.startsWith("/visitor/") && pathStr !== "/auth/visitor-login" ? pathStr : requestedReturn || "/visitor/home");
   }, []);
 
   const sendVisitorOtp = async (purpose: "register" | "reset") => {
-    if (!phone.trim()) return setError("أدخل رقم الجوال اليمني أولاً.");
+    const formattedPhone = formatYemeniSubmitPhone(phone);
+    if (!formattedPhone) {
+      return setError(purpose === "register" ? "أدخل رقم واتساب اليمني أولاً." : "أدخل رقم الجوال اليمني أولاً.");
+    }
     setError("");
     setInfoMsg("");
     setOtpLoading(true);
@@ -1006,14 +1340,14 @@ function VisitorLoginPrompt() {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
         credentials: "include",
-        body: JSON.stringify({ role: "visitor", phone: phone.trim(), purpose }),
+        body: JSON.stringify({ role: "visitor", phone: formattedPhone, purpose }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.success) {
         return setError(json?.error || "تعذر إرسال رمز واتساب OTP.");
       }
       setOtpSent(true);
-      setInfoMsg("تم إرسال رمز التحقق إلى رقم جوالك عبر واتساب.");
+      setInfoMsg("تم إرسال رمز التحقق إلى رقمك عبر واتساب.");
       toastMessage("تم إرسال رمز التحقق عبر واتساب");
     } catch {
       setError("تعذر الاتصال بخادم التحقق.");
@@ -1026,9 +1360,10 @@ function VisitorLoginPrompt() {
     event.preventDefault();
     setError("");
     setInfoMsg("");
+    const formattedPhone = formatYemeniSubmitPhone(phone);
 
     if (mode === "reset") {
-      if (!phone.trim() || !otp.trim() || newPassword.length < 6) {
+      if (!formattedPhone || !otp.trim() || newPassword.length < 6) {
         return setError("أدخل رقم الجوال، رمز التحقق، وكلمة مرور جديدة (6 أحرف على الأقل).");
       }
       setLoading(true);
@@ -1037,7 +1372,7 @@ function VisitorLoginPrompt() {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
           credentials: "include",
-          body: JSON.stringify({ role: "visitor", phone: phone.trim(), otp: otp.trim(), newPassword }),
+          body: JSON.stringify({ role: "visitor", phone: formattedPhone, otpCode: otp.trim(), newPassword }),
         });
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.success) return setError(json?.error || "تعذر تحديث كلمة المرور.");
@@ -1055,19 +1390,19 @@ function VisitorLoginPrompt() {
       return;
     }
 
-    if (!phone.trim() || password.length < 6) {
+    if (!formattedPhone || password.length < 6) {
       return setError("أدخل رقم الجوال وكلمة مرور من 6 أحرف على الأقل.");
     }
     if (mode === "register" && (!name.trim() || !otp.trim())) {
-      return setError("أدخل الاسم الكامل وأكمل التحقق برمز واتساب OTP لإنشاء الحساب.");
+      return setError("أدخل الاسم الكامل وأكمل التحقق برمز واتساب لإنشاء الحساب.");
     }
 
     setLoading(true);
     try {
       const endpoint = mode === "register" ? "/api/auth/phone-register" : "/api/auth/phone-login";
       const payload = mode === "register"
-        ? { role: "visitor", name: name.trim(), phone: phone.trim(), password, otp: otp.trim() }
-        : { role: "visitor", phone: phone.trim(), password };
+        ? { role: "visitor", name: name.trim(), phone: formattedPhone, password, otpCode: otp.trim() }
+        : { role: "visitor", phone: formattedPhone, password };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
@@ -1080,7 +1415,7 @@ function VisitorLoginPrompt() {
       }
 
       const fbUser = await syncFirebaseBridgeClient(json.fbBridgeEmail, json.fbBridgeSecret);
-      const userPhone = json.user?.phone || phone.trim();
+      const userPhone = json.user?.phone || formattedPhone;
       const userName = json.user?.name || name.trim() || userPhone;
 
       if (fbUser) {
@@ -1094,6 +1429,9 @@ function VisitorLoginPrompt() {
         }, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${fbUser.uid}`));
       }
 
+      safeStorage.removeItem("yafa-role");
+      safeStorage.removeItem("yafa-owner-phone");
+      setRole(null);
       safeStorage.setItem("yafa-visitor-auth", userPhone);
       safeStorage.setItem("yafa-customer-phone", userPhone);
       if (userName) safeStorage.setItem("yafa-customer-name", userName);
@@ -1110,62 +1448,255 @@ function VisitorLoginPrompt() {
   const handleVisitorLogout = async () => {
     await clearServerAndFirebaseSession();
     safeStorage.removeItem("yafa-visitor-auth");
+    safeStorage.removeItem("yafa-customer-phone");
+    safeStorage.removeItem("yafa-customer-name");
     setLoggedPhone("");
     toastMessage("تم تسجيل الخروج من حساب الزائر");
   };
 
-  return <main className="auth-page"><TopBar back="/visitor/home" /><div className="auth-shell"><Brand /><span className="eyebrow">حساب الزائر</span>
-    {loggedPhone ? (
-      <>
-        <h1>حسابك نشط</h1>
-        <p>مسجل الدخول حالياً برقم الجوال: <b dir="ltr">{loggedPhone}</b></p>
-        <div style={{ display: "grid", gap: "10px", width: "100%", marginTop: "12px" }}>
-          <Button kind="gold" onClick={() => route("/visitor/home")}>العودة للرئيسية</Button>
-          <Button kind="outline" onClick={() => route("/visitor/orders")}>طلباتي</Button>
-          <Button kind="danger" onClick={handleVisitorLogout}><LogOut /> تسجيل الخروج</Button>
+  if (loggedPhone) {
+    return (
+      <YafaAuthScreenFrame title="حساب الزائر" onBack={() => route("/visitor/home")}>
+        <div className="yafa-auth-form">
+          <div className="alert success">
+            <Check />
+            <span>حسابك نشط برقم الجوال (<b dir="ltr">{loggedPhone}</b>)</span>
+          </div>
+          <button type="button" className="yafa-auth-primary-btn" onClick={() => route("/visitor/home")}>
+            العودة للرئيسية
+          </button>
+          <div className="yafa-auth-links-stack">
+            <button type="button" className="yafa-auth-gold-link" onClick={() => route("/visitor/orders")}>
+              طلباتي
+            </button>
+            <button type="button" className="yafa-auth-gold-link" onClick={handleVisitorLogout}>
+              تسجيل الخروج
+            </button>
+          </div>
         </div>
-      </>
-    ) : (
-      <>
-        <h1>{mode === "login" ? "دخول الزائر" : mode === "register" ? "إنشاء حساب زائر جديد" : "استعادة كلمة المرور"}</h1>
-        <p>التصفح متاح دون حساب. سجّل الدخول برقم الجوال وكلمة المرور لحفظ طلباتك ومحادثاتك.</p>
-        {error && <div className="alert error"><AlertTriangle />{error}</div>}
-        {infoMsg && <div className="alert success"><Check />{infoMsg}</div>}
-        <form onSubmit={handleVisitorAuth}>
-          {mode === "register" && <label>الاسم الكامل *<input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثال: أحمد اليافعي" required /></label>}
-          <label>رقم الجوال *<input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="77xxxxxxx أو 9677xxxxxxxx" required /></label>
-          {mode !== "reset" && (
-            <label>كلمة المرور (6 أحرف على الأقل) *<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} required /></label>
-          )}
-          {(mode === "register" || mode === "reset") && (
+      </YafaAuthScreenFrame>
+    );
+  }
+
+  const title = mode === "login" ? "دخول الزائر" : mode === "register" ? "إنشاء حساب زائر" : "استعادة كلمة المرور";
+
+  return (
+    <YafaAuthScreenFrame
+      title={title}
+      onBack={() => {
+        if (mode !== "login") {
+          setError("");
+          setInfoMsg("");
+          setOtpSent(false);
+          setMode("login");
+        } else {
+          route(returnTo.startsWith("/visitor/") ? returnTo : "/visitor/home");
+        }
+      }}
+    >
+      {error && <div className="alert error"><AlertTriangle />{error}</div>}
+      {infoMsg && <div className="alert success"><Check />{infoMsg}</div>}
+      {mode === "login" && (
+        <form className="yafa-auth-form" onSubmit={handleVisitorAuth}>
+          <label className="yafa-auth-label">
+            رقم الجوال
+            <YafaPhonePrefixInput value={phone} onChange={setPhone} />
+          </label>
+          <label className="yafa-auth-label">
+            كلمة المرور
+            <YafaPasswordField value={password} onChange={setPassword} minLength={6} autoComplete="current-password" />
+          </label>
+          <button
+            type="button"
+            className="yafa-auth-gold-link"
+            onClick={() => {
+              setError("");
+              setInfoMsg("");
+              setOtp("");
+              setOtpSent(false);
+              setMode("reset");
+            }}
+          >
+            نسيت كلمة المرور؟
+          </button>
+          <button type="submit" className="yafa-auth-primary-btn" disabled={loading}>
+            {loading ? <><span className="spinner" /> جارٍ الدخول...</> : "دخول"}
+          </button>
+          <div className="yafa-auth-links-stack">
+            <button
+              type="button"
+              className="yafa-auth-gold-link"
+              onClick={() => {
+                setError("");
+                setInfoMsg("");
+                setOtp("");
+                setOtpSent(false);
+                setMode("register");
+              }}
+            >
+              إنشاء حساب
+            </button>
+            <button type="button" className="yafa-auth-gold-link" onClick={() => route("/visitor/home")}>
+              متابعة كزائر
+            </button>
+          </div>
+        </form>
+      )}
+
+      {mode === "register" && (
+        <form className="yafa-auth-form" onSubmit={handleVisitorAuth}>
+          <label className="yafa-auth-label">
+            الاسم الكامل
+            <input
+              className="yafa-auth-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoComplete="name"
+              required
+            />
+          </label>
+          <label className="yafa-auth-label">
+            رقم واتساب
+            <input
+              className="yafa-auth-input"
+              type="tel"
+              inputMode="tel"
+              dir="ltr"
+              style={{ textAlign: "right" }}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              autoComplete="tel"
+              required
+            />
+          </label>
+          <label className="yafa-auth-label">
+            كلمة المرور
+            <YafaPasswordField value={password} onChange={setPassword} minLength={6} autoComplete="new-password" />
+          </label>
+          {!otpSent ? (
+            <button
+              type="button"
+              className="yafa-auth-primary-btn"
+              disabled={otpLoading}
+              onClick={() => sendVisitorOtp("register")}
+            >
+              {otpLoading ? <><span className="spinner" /> جارٍ الإرسال...</> : "إرسال رمز التحقق"}
+            </button>
+          ) : (
             <>
-              <Button type="button" kind="outline" disabled={otpLoading} onClick={() => sendVisitorOtp(mode)}>
-                {otpLoading ? "جارٍ الإرسال..." : otpSent ? "إعادة إرسال رمز واتساب" : "إرسال رمز التحقق عبر واتساب"}
-              </Button>
-              {otpSent && (
-                <label>رمز التحقق عبر واتساب (6 أرقام) *<input type="text" inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="123456" required /></label>
-              )}
-              {mode === "reset" && otpSent && (
-                <label>كلمة المرور الجديدة *<input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} minLength={6} required /></label>
-              )}
+              <label className="yafa-auth-label">
+                رمز التحقق عبر واتساب
+                <input
+                  className="yafa-auth-input text-center tracking-[0.35em]"
+                  type="text"
+                  inputMode="numeric"
+                  dir="ltr"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  placeholder="••••••"
+                  required
+                />
+              </label>
+              <button type="submit" className="yafa-auth-primary-btn" disabled={loading}>
+                {loading ? <><span className="spinner" /> جارٍ الإنشاء...</> : "تأكيد وإنشاء الحساب"}
+              </button>
+              <button
+                type="button"
+                className="yafa-auth-gold-link"
+                disabled={otpLoading}
+                onClick={() => sendVisitorOtp("register")}
+              >
+                {otpLoading ? "جارٍ الإرسال..." : "إعادة إرسال رمز التحقق"}
+              </button>
             </>
           )}
-          <Button type="submit" disabled={loading || ((mode === "register" || mode === "reset") && !otpSent)}>
-            {loading ? <><span className="spinner" /> جارٍ التنفيذ...</> : <><LockKeyhole /> {mode === "login" ? "تسجيل الدخول" : mode === "register" ? "تأكيد وإنشاء الحساب" : "تحديث كلمة المرور"}</>}
-          </Button>
-          {mode === "login" && (
-            <button type="button" className="text-link" onClick={() => { setError(""); setInfoMsg(""); setOtpSent(false); setMode("reset"); }}>
-              نسيت كلمة المرور؟
+          <div className="yafa-auth-links-stack">
+            <button
+              type="button"
+              className="yafa-auth-gold-link"
+              onClick={() => {
+                setError("");
+                setInfoMsg("");
+                setOtpSent(false);
+                setMode("login");
+              }}
+            >
+              لديك حساب؟ دخول
             </button>
-          )}
-          <Button type="button" kind="outline" onClick={() => { setError(""); setInfoMsg(""); setOtpSent(false); setMode(mode === "login" ? "register" : "login"); }}>
-            {mode === "login" ? "ليس لديك حساب؟ أنشئ حساباً" : "لديك حساب بالفعل؟ تسجيل الدخول"}
-          </Button>
-          <Button kind="ghost" onClick={() => route("/visitor/home")}>متابعة التصفح كزائر</Button>
+            <button type="button" className="yafa-auth-gold-link" onClick={() => route("/visitor/home")}>
+              متابعة كزائر
+            </button>
+          </div>
         </form>
-      </>
-    )}
-    <div className="prototype-note"><ShieldCheck /> الدخول برقم الجوال وكلمة المرور · التحقق عبر واتساب OTP عند التسجيل أو الاستعادة فقط.</div></div></main>;
+      )}
+
+      {mode === "reset" && (
+        <form className="yafa-auth-form" onSubmit={handleVisitorAuth}>
+          <label className="yafa-auth-label">
+            رقم الجوال
+            <YafaPhonePrefixInput value={phone} onChange={setPhone} />
+          </label>
+          {!otpSent ? (
+            <button
+              type="button"
+              className="yafa-auth-primary-btn"
+              disabled={otpLoading}
+              onClick={() => sendVisitorOtp("reset")}
+            >
+              {otpLoading ? <><span className="spinner" /> جارٍ الإرسال...</> : "إرسال رمز التحقق"}
+            </button>
+          ) : (
+            <>
+              <label className="yafa-auth-label">
+                رمز التحقق عبر واتساب
+                <input
+                  className="yafa-auth-input text-center tracking-[0.35em]"
+                  type="text"
+                  inputMode="numeric"
+                  dir="ltr"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  placeholder="••••••"
+                  required
+                />
+              </label>
+              <label className="yafa-auth-label">
+                كلمة المرور الجديدة
+                <YafaPasswordField value={newPassword} onChange={setNewPassword} minLength={6} autoComplete="new-password" />
+              </label>
+              <button type="submit" className="yafa-auth-primary-btn" disabled={loading}>
+                {loading ? <><span className="spinner" /> جارٍ التحديث...</> : "تحديث كلمة المرور"}
+              </button>
+              <button
+                type="button"
+                className="yafa-auth-gold-link"
+                disabled={otpLoading}
+                onClick={() => sendVisitorOtp("reset")}
+              >
+                {otpLoading ? "جارٍ الإرسال..." : "إعادة إرسال رمز التحقق"}
+              </button>
+            </>
+          )}
+          <div className="yafa-auth-links-stack">
+            <button
+              type="button"
+              className="yafa-auth-gold-link"
+              onClick={() => {
+                setError("");
+                setInfoMsg("");
+                setOtpSent(false);
+                setMode("login");
+              }}
+            >
+              العودة لتسجيل الدخول
+            </button>
+          </div>
+        </form>
+      )}
+    </YafaAuthScreenFrame>
+  );
 }
 
 const visitorScreens = [
@@ -1266,7 +1797,9 @@ function VisitorHome() {
   const [district, setDistrict] = useState("لبعوس");
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [liveRates, setLiveRates] = useState<ExchangeRateData>(DEFAULT_EXCHANGE_RATES);
+  const [liveRates, setLiveRates] = useState<ExchangeRateData | null>(null);
+  const [ratesLoading, setRatesLoading] = useState(true);
+  const [ratesError, setRatesError] = useState(false);
   const activityImages = useActivityImages();
   const appImages = useAppImages();
   const liveActivities = useHomeActivities();
@@ -1274,18 +1807,75 @@ function VisitorHome() {
   useEffect(() => {
     setHydrated(true);
     setDistrict(safeStorage.getItem("yafa-district") || "لبعوس");
-    setLiveRates(loadExchangeRates());
-    getDoc(doc(db, "settings", "exchangeRates"))
-      .then((snap) => {
+    setRatesLoading(true);
+    setRatesError(false);
+    const local = loadExchangeRates();
+    if (local) {
+      setLiveRates(local);
+      setRatesLoading(false);
+    }
+
+    const syncFromApi = () => {
+      fetch("/api/exchange-rates")
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to fetch");
+          return res.json();
+        })
+        .then((json) => {
+          const normalized = json?.success && json?.approved === true ? normalizeApprovedRateDoc(json.data) : null;
+          if (normalized) {
+            setLiveRates(normalized);
+            safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(normalized));
+          } else {
+            setLiveRates(null);
+            safeStorage.removeItem(exchangeRateStorageKey);
+          }
+          setRatesLoading(false);
+          setRatesError(false);
+        })
+        .catch(() => {
+          setRatesError(true);
+          setRatesLoading(false);
+        });
+    };
+
+    const unsubRates = onSnapshot(
+      doc(db, "settings", "exchangeRates"),
+      (snap) => {
         if (snap.exists()) {
-          const cloud = snap.data() as ExchangeRateData;
-          if (cloud?.rates?.SAR?.buy && cloud?.rates?.USD?.buy) {
-            setLiveRates(cloud);
-            safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(cloud));
+          const normalized = normalizeApprovedRateDoc(snap.data());
+          if (normalized) {
+            setLiveRates(normalized);
+            safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(normalized));
+            setRatesLoading(false);
+            setRatesError(false);
+            return;
           }
         }
-      })
-      .catch(() => {});
+        setLiveRates(null);
+        safeStorage.removeItem(exchangeRateStorageKey);
+        syncFromApi();
+      },
+      () => {
+        setRatesError(true);
+        setRatesLoading(false);
+      },
+    );
+
+    const onRatesUpdated = () => {
+      const localApproved = loadExchangeRates();
+      if (localApproved) {
+        setLiveRates(localApproved);
+      } else {
+        syncFromApi();
+      }
+    };
+
+    window.addEventListener("yafa-exchange-rates-updated", onRatesUpdated);
+    return () => {
+      unsubRates();
+      window.removeEventListener("yafa-exchange-rates-updated", onRatesUpdated);
+    };
   }, []);
   const changeDistrict = (value: string) => {
     setDistrict(value);
@@ -1362,40 +1952,63 @@ function VisitorHome() {
           switch (sec.id) {
             case "heroCarousel":
               return <VisitorCarousel key="heroCarousel" />;
-            case "quickActivities":
+            case "quickActivities": {
+              const isApprovedRates = isValidApprovedRateDoc(liveRates);
+              const approvedUpdatedText =
+                hydrated && isApprovedRates && liveRates?.updatedAt
+                  ? formatRateTimestamp(liveRates.updatedAt, "short")
+                  : "لا يوجد تحديث معتمد";
               return (
                 <div key="quickActivitiesWithRates">
-                  <section className="home-section" key="exchangeRatesTop">
-                    <div style={{ background: "linear-gradient(135deg, #064b3d, #03372d)", color: "white", borderRadius: "16px", padding: "16px 20px", boxShadow: "0 6px 20px rgba(6,75,61,0.18)", marginBottom: "12px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <Landmark style={{ width: 22, color: "var(--gold)" }} />
-                          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "white" }}>أسعار الصرف – جنوب اليمن</h3>
-                        </div>
-                        <span style={{ fontSize: "11px", background: "rgba(199,148,44,0.2)", color: "var(--gold)", padding: "3px 8px", borderRadius: "6px" }}>معتمدة من الإدارة</span>
+                  <section className="home-section" key="exchangeRatesTop" aria-labelledby="home-exchange-rates-title">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => route("/visitor/exchange-rates")}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          route("/visitor/exchange-rates");
+                        }
+                      }}
+                      aria-label="أسعار الصرف — اضغط لفتح صفحة أسعار الصرف"
+                      className="bg-[#064B3D] text-white rounded-2xl px-4 py-3.5 shadow-[0_8px_24px_rgba(6,75,61,0.16)] border border-[#c7942c]/30 cursor-pointer flex items-center justify-between gap-3 my-3 w-full transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#c7942c]"
+                    >
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Clock className="w-5 h-5 text-[#c7942c]" />
+                        <h3 id="home-exchange-rates-title" className="m-0 font-extrabold text-sm sm:text-base text-white">
+                          الصرف
+                        </h3>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
-                        <div style={{ background: "rgba(255,255,255,0.08)", padding: "10px 12px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)" }}>
-                          <div style={{ fontSize: "12px", color: "var(--gold-pale)", marginBottom: "4px" }}>الريال السعودي (SAR)</div>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
-                            <span>شراء: <b>{liveRates.rates.SAR.buy}</b></span>
-                            <span>بيع: <b>{liveRates.rates.SAR.sell}</b></span>
-                          </div>
-                        </div>
-                        <div style={{ background: "rgba(255,255,255,0.08)", padding: "10px 12px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)" }}>
-                          <div style={{ fontSize: "12px", color: "var(--gold-pale)", marginBottom: "4px" }}>الدولار الأمريكي (USD)</div>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
-                            <span>شراء: <b>{liveRates.rates.USD.buy}</b></span>
-                            <span>بيع: <b>{liveRates.rates.USD.sell}</b></span>
-                          </div>
-                        </div>
+
+                      <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm font-bold">
+                        {ratesLoading ? (
+                          <span className="text-[#f5ead0]/90">جارٍ التحميل...</span>
+                        ) : ratesError ? (
+                          <span className="text-[#f5ead0]/90">تعذّر تحميل الأسعار</span>
+                        ) : !isApprovedRates ? (
+                          <span className="text-[#f5ead0]/90">بانتظار اعتماد الأسعار</span>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-1.5" dir="rtl">
+                              <span className="text-[#f5ead0]/90">سعودي</span>
+                              <span className="text-white font-extrabold tabular-nums" dir="ltr">
+                                {liveRates.rates.SAR.sell.toLocaleString("en-US")}
+                              </span>
+                            </div>
+                            <div className="w-[1px] h-4 bg-white/25" />
+                            <div className="flex items-center gap-1.5" dir="rtl">
+                              <span className="text-[#f5ead0]/90">دولار</span>
+                              <span className="text-white font-extrabold tabular-nums" dir="ltr">
+                                {liveRates.rates.USD.sell.toLocaleString("en-US")}
+                              </span>
+                            </div>
+                          </>
+                        )}
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "var(--gold-pale)" }}>
-                        <span>آخر تحديث: {hydrated ? new Intl.DateTimeFormat("ar-YE", { dateStyle: "short", timeStyle: "short" }).format(new Date(liveRates.updatedAt)) : "معتمد اليوم"}</span>
-                        <button onClick={() => route("/visitor/exchange-rates")} style={{ background: "var(--gold)", color: "var(--forest-dark)", border: "none", padding: "6px 14px", borderRadius: "8px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <span>المحول والأسعار</span>
-                          <ChevronLeft style={{ width: 14 }} />
-                        </button>
+
+                      <div className="text-[#c7942c] shrink-0">
+                        <ChevronLeft className="w-5 h-5" />
                       </div>
                     </div>
                   </section>
@@ -1413,7 +2026,7 @@ function VisitorHome() {
                             activityImages[act.id] || fallbackImg,
                           );
                           return (
-                            <button key={act.id} onClick={() => route(act.path)}>
+                            <button key={act.id} onClick={() => route(act.path || `/visitor/${act.id}`)}>
                               <div className="activity-image">
                                 <img
                                   src={cardSrc}
@@ -1437,6 +2050,7 @@ function VisitorHome() {
                   </section>
                 </div>
               );
+            }
             case "exchangeRemittance":
               return null;
             case "featuredStores":
@@ -1552,7 +2166,7 @@ const homeActivities = [
   { id: "maintenance", name: "الورش والصيانة", path: "/visitor/maintenance", Icon: Wrench, image: "/assets/activities/maintenance.jpg", banner: "/assets/activity-banners/maintenance.jpg" },
   { id: "used", name: "حراج المستعمل", path: "/visitor/used", Icon: Package, image: "/assets/activities/used.jpg", banner: "/assets/activity-banners/used.jpg" },
   { id: "exchange", name: "الصرافة والتحويلات", path: "/visitor/exchange", Icon: Landmark, image: "/assets/activities/exchange.jpg", banner: "/assets/activity-banners/exchange.jpg" },
-  { id: "professionals", name: "أصحاب المهن", path: "/visitor/professionals", Icon: Wrench, image: "/assets/activities/maintenance.jpg", banner: "/assets/activity-banners/maintenance.jpg" },
+  { id: "professionals", name: "أصحاب المهن", path: "/visitor/professionals", Icon: Wrench, image: "/assets/aistudio/file_000000009dfc8210a5ae82f9f4fd9107_aff3db0e.png", banner: "/assets/activity-banners/maintenance.jpg" },
 ] as const;
 
 const categoryActivityIds: Record<string, string> = {
@@ -1678,17 +2292,57 @@ function VisitorCarousel() {
     onTouchCancel={() => setTouching(false)}
   >
     <div className="carousel-track" style={{ transform: `translateX(-${current * 100}%)` }}>
-      {ads.map((ad, index) => <button
-        className="ad-slide"
-        key={ad.id}
-        onClick={() => {
-          if (didSwipe.current) { didSwipe.current = false; return; }
-          route(ad.route);
-        }}
-        aria-label={`${ad.title}: ${ad.description}`}
-        aria-hidden={index !== current}
-        tabIndex={index === current ? 0 : -1}
-      ><img src={ad.image} alt={`${ad.title} — ${ad.description}`} draggable="false" loading={index === 0 ? "eager" : "lazy"} fetchPriority={index === 0 ? "high" : "auto"} onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = hero; }} /></button>)}
+      {ads.map((ad, index) => {
+        const isMainBrandSlide =
+          index === 0 ||
+          ad.id === 1 ||
+          ad.image.includes("welcome.jpg") ||
+          ad.image.includes("yafa-banner-clean.jpg");
+        const slideImage =
+          ad.image.includes("welcome.jpg")
+            ? "/assets/yafa-banner-clean.jpg"
+            : ad.image;
+        return (
+          <button
+            className="ad-slide relative overflow-hidden"
+            key={ad.id}
+            onClick={() => {
+              if (didSwipe.current) { didSwipe.current = false; return; }
+              route(ad.route);
+            }}
+            aria-label={isMainBrandSlide ? "يافع ون" : `${ad.title}: ${ad.description}`}
+            aria-hidden={index !== current}
+            tabIndex={index === current ? 0 : -1}
+          >
+            <img
+              src={slideImage}
+              alt={isMainBrandSlide ? "يافع ون" : `${ad.title} — ${ad.description}`}
+              draggable="false"
+              loading={index === 0 ? "eager" : "lazy"}
+              fetchPriority={index === 0 ? "high" : "auto"}
+              onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = hero; }}
+            />
+            {isMainBrandSlide && (
+              <div
+                className="absolute inset-0 flex items-center justify-end px-4 sm:px-10 md:px-14 pointer-events-none bg-gradient-to-r from-[#064B3D]/50 via-transparent to-transparent"
+                dir="rtl"
+              >
+                <div className="flex flex-col items-center gap-1.5 sm:gap-2.5 px-3.5 py-2 sm:px-6 sm:py-4 rounded-2xl bg-[#faf8f0]/90 backdrop-blur-[4px] border border-[#c7942c]/55 shadow-lg">
+                  <img
+                    src="/assets/yafa-emblem.jpg"
+                    alt=""
+                    aria-hidden="true"
+                    className="w-16 h-16 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-xl object-cover border-2 border-[#c7942c]/70 shadow-sm shrink-0"
+                  />
+                  <span className="text-lg sm:text-3xl md:text-4xl font-extrabold text-[#064B3D] leading-none tracking-tight whitespace-nowrap">
+                    يافع ون
+                  </span>
+                </div>
+              </div>
+            )}
+          </button>
+        );
+      })}
     </div>
     <div className="carousel-dots" aria-label="اختيار الإعلان">
       {ads.map((ad, index) => <button key={ad.id} className={index === current ? "active" : ""} onClick={() => setCurrent(index)} aria-label={`الإعلان ${index + 1}: ${ad.title}`} aria-current={index === current ? "true" : undefined} />)}
@@ -1876,7 +2530,6 @@ function VisitorCategory({ type }: { type: string }) {
   }, [cloudStores, selectedDistrict, defaultStoreCover]);
 
   return <VisitorShell>
-    <ScenicHero title={copy.title} subtitle={copy.subtitle} icon={copy.icon} image={resolvedCategoryBanner} activity={Boolean(activityId)} />
     <SearchBar />
     <div className="filter-row">
       <Button kind="outline" onClick={() => setFilterOpen(true)}><MapPin /> {selectedDistrict === "الكل" ? "كل مديريات يافع" : selectedDistrict}</Button>
@@ -2912,31 +3565,43 @@ function VisitorServiceShell({ children }: { children: React.ReactNode }) {
 
 function ExchangeRatesPage() {
   const [hydrated, setHydrated] = useState(false);
-  const [data, setData] = useState<ExchangeRateData | null>(DEFAULT_EXCHANGE_RATES);
+  const [data, setData] = useState<ExchangeRateData | null>(null);
   const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState("");
   const [fromCurr, setFromCurr] = useState<"YER" | "SAR" | "USD">("SAR");
   const [toCurr, setToCurr] = useState<"YER" | "SAR" | "USD">("YER");
 
-  const fetchRates = async () => {
+  const fetchRates = async (silent = false) => {
     setLoading(true);
     try {
+      const snap = await getDoc(doc(db, "settings", "exchangeRates")).catch(() => null);
+      if (snap && snap.exists()) {
+        const normalized = normalizeApprovedRateDoc(snap.data());
+        if (normalized) {
+          setData(normalized);
+          safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(normalized));
+          if (!silent) toastMessage("تم تحديث أسعار الصرف المعتمدة من Firebase");
+          return;
+        }
+      }
+
       const res = await fetch("/api/exchange-rates");
       const ct = res.headers.get("content-type");
       const json = res.ok && ct && ct.includes("application/json") ? await res.json() : null;
-      if (json && json.success && json.data) {
-        setData(json.data);
-        safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(json.data));
-        toastMessage("تم تحديث أسعار الصرف بنجاح من المصدر المعتمد");
+      const normalizedApi = json?.success && json?.approved === true ? normalizeApprovedRateDoc(json.data) : null;
+      if (normalizedApi) {
+        setData(normalizedApi);
+        safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(normalizedApi));
+        if (!silent) toastMessage("تم تحديث أسعار الصرف بنجاح من المصدر المعتمد");
       } else {
-        const fallback = loadExchangeRates();
-        setData(fallback);
-        toastMessage("تم استخدام آخر سعر موثوق محفوظ محلياً");
+        setData(null);
+        safeStorage.removeItem(exchangeRateStorageKey);
+        if (!silent) toastMessage("لا توجد أسعار معتمدة حالياً");
       }
     } catch {
       const fallback = loadExchangeRates();
       setData(fallback);
-      toastMessage("تعذر الاتصال بالخادم، تم عرض آخر سعر موثوق");
+      if (!silent) toastMessage(fallback ? "تعذر الاتصال، تم عرض آخر سعر معتمد محفوظ" : "لا توجد أسعار معتمدة حالياً");
     } finally {
       setLoading(false);
     }
@@ -2945,7 +3610,25 @@ function ExchangeRatesPage() {
   useEffect(() => {
     setHydrated(true);
     setData(loadExchangeRates());
-    fetchRates();
+    fetchRates(true);
+
+    const unsub = onSnapshot(
+      doc(db, "settings", "exchangeRates"),
+      (snap) => {
+        if (snap.exists()) {
+          const normalized = normalizeApprovedRateDoc(snap.data());
+          if (normalized) {
+            setData(normalized);
+            safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(normalized));
+            return;
+          }
+        }
+        setData(null);
+        safeStorage.removeItem(exchangeRateStorageKey);
+      },
+      () => {},
+    );
+    return () => unsub();
   }, []);
 
   const numericAmount = Number(amount);
@@ -2982,53 +3665,101 @@ function ExchangeRatesPage() {
     { code: "USD", name: "الدولار الأمريكي" },
   ] as const;
 
+  const isApproved = isValidApprovedRateDoc(data);
+
   return <VisitorServiceShell>
-    <section className="finance-hero" style={{ backgroundImage: `linear-gradient(120deg,rgba(2,50,41,.96),rgba(5,94,75,.68)),url(${exchangeHeroImg})` }}><div className="finance-icon"><Landmark /></div><div><span className="eyebrow">الخدمات المالية · سوق عدن وجنوب اليمن</span><h1>أسعار الصرف – جنوب اليمن</h1><p>الريال السعودي والدولار الأمريكي مقابل الريال اليمني (مرجعية سوق عدن المالي)</p></div></section>
-    <div className="connection-status online"><Wifi /><span>بيانات محدثة معتمدة من إدارة التطبيق (سوق عدن)</span></div>
+    <section className="finance-hero" style={{ backgroundImage: `linear-gradient(120deg,rgba(2,50,41,.96),rgba(5,94,75,.68)),url(${exchangeHeroImg})` }}><div className="finance-icon"><Landmark /></div><div><span className="eyebrow">الخدمات المالية · سوق عدن وجنوب اليمن</span><h1>أسعار الصرف – جنوب اليمن</h1><p>الريال السعودي والدولار الأمريكي مقابل الريال اليمني</p></div></section>
+    {isApproved ? (
+      <div className="connection-status online"><Wifi /><span>أسعار معتمدة من الإدارة ({data?.source})</span></div>
+    ) : (
+      <div className="connection-status offline"><WifiOff /><span>لا توجد أسعار معتمدة حالياً</span></div>
+    )}
     
     <section className="rate-panel">
       <div className="rate-meta">
-        <div><span>آخر تحديث (توقيت اليمن)</span><b>{hydrated && data ? new Intl.DateTimeFormat("ar-YE", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(data.updatedAt)) : "معتمد اليوم"}</b></div>
-        <div><span>المصدر المعتمد</span><b>{data?.source || "سوق عدن المالي - جنوب اليمن"}</b></div>
-        <div><span>حالة البيانات</span><b style={{ color: "var(--gold)" }}>محدثة (نشطة)</b></div>
+        <div><span>آخر تحديث (توقيت اليمن)</span><b>{hydrated && isApproved && data ? formatRateTimestamp(data.updatedAt, "medium") : "غير متاح"}</b></div>
+        <div><span>المصدر المعتمد</span><b>{isApproved && data?.source ? data.source : "بانتظار الاعتماد"}</b></div>
+        <div><span>حالة البيانات</span><b style={{ color: isApproved ? "var(--gold)" : "#8b5c1b" }}>{isApproved ? "معتمدة من الإدارة" : "لا توجد أسعار معتمدة حالياً"}</b></div>
       </div>
 
-      <div className="rate-table" role="table" aria-label="أسعار الصرف">
-        <div className="rate-head" role="row">
-          <b>العملة</b>
-          <b>شراء (YER)</b>
-          <b>بيع (YER)</b>
-          <b>التغير</b>
-          <b>الاتجاه</b>
-        </div>
-        {currencies.map(({ code, name }) => {
-          const item = data?.rates[code];
-          const buy = item?.buy || 0;
-          const sell = item?.sell || 0;
-          const prevBuy = item?.prevBuy ?? buy;
-          const diff = buy - prevBuy;
-          const trend = diff > 0 ? "↗ ارتفاع" : diff < 0 ? "↘ انخفاض" : "＝ ثبات";
-          const trendColor = diff > 0 ? "#16a34a" : diff < 0 ? "#dc2626" : "#6b7280";
-          return (
-            <div className="rate-row" role="row" key={code} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1fr", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee" }}>
-              <span><i>{code}</i><b>{name}</b></span>
-              <strong>{buy.toLocaleString("en-US")}</strong>
-              <strong>{sell.toLocaleString("en-US")}</strong>
-              <span style={{ color: trendColor, fontWeight: 700 }}>{diff > 0 ? `+${diff}` : diff}</span>
-              <span style={{ color: trendColor, fontWeight: 700 }}>{trend}</span>
+      {isApproved && data ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:hidden">
+            {currencies.map(({ code, name }) => {
+              const item = data.rates[code];
+              const buy = item?.buy || 0;
+              const sell = item?.sell || 0;
+              const prevBuy = item?.prevBuy ?? buy;
+              const diff = buy - prevBuy;
+              const trend = diff > 0 ? "↗ ارتفاع" : diff < 0 ? "↘ انخفاض" : "＝ ثبات";
+              const trendColor = diff > 0 ? "#16a34a" : diff < 0 ? "#dc2626" : "#6b7280";
+              return (
+                <div key={code} className="rounded-xl border border-[#dfe7e3] bg-[#f8fbf9] p-3.5">
+                  <div className="flex items-center justify-between gap-2 pb-2 mb-2.5 border-b border-[#e4ece8]">
+                    <div>
+                      <span className="text-[11px] font-bold text-[#c7942c] block">{code}</span>
+                      <strong className="text-sm font-extrabold text-[#064B3D]">{name}</strong>
+                    </div>
+                    <span className="text-xs font-bold" style={{ color: trendColor }}>
+                      {trend} ({diff > 0 ? `+${diff}` : diff})
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 text-center">
+                    <div className="rounded-lg bg-white border border-[#e3eae6] py-2 px-2">
+                      <span className="block text-[11px] text-[#5c6b66] font-semibold">شراء (YER)</span>
+                      <strong className="block text-xl font-extrabold text-[#064B3D] tabular-nums" dir="ltr">
+                        {buy.toLocaleString("en-US")}
+                      </strong>
+                    </div>
+                    <div className="rounded-lg bg-white border border-[#e3eae6] py-2 px-2">
+                      <span className="block text-[11px] text-[#5c6b66] font-semibold">بيع (YER)</span>
+                      <strong className="block text-xl font-extrabold text-[#064B3D] tabular-nums" dir="ltr">
+                        {sell.toLocaleString("en-US")}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="rate-table hidden sm:block" role="table" aria-label="أسعار الصرف">
+            <div className="rate-head" role="row" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 0.9fr 1fr" }}>
+              <b>العملة</b>
+              <b>شراء (YER)</b>
+              <b>بيع (YER)</b>
+              <b>التغير</b>
+              <b>الاتجاه</b>
             </div>
-          );
-        })}
-      </div>
-
-      {!data && <div className="unavailable-state"><AlertTriangle /><b>الأسعار غير متاحة حالياً</b><p>لن نعرض أسعارًا تقديرية أو عشوائية غير متحقق منها.</p></div>}
-      <Button onClick={fetchRates} disabled={loading}>{loading ? <><span className="spinner" /> جارٍ التحديث...</> : <><RefreshCw /> تحديث الأسعار من الخادم</>}</Button>
+            {currencies.map(({ code, name }) => {
+              const item = data.rates[code];
+              const buy = item?.buy || 0;
+              const sell = item?.sell || 0;
+              const prevBuy = item?.prevBuy ?? buy;
+              const diff = buy - prevBuy;
+              const trend = diff > 0 ? "↗ ارتفاع" : diff < 0 ? "↘ انخفاض" : "＝ ثبات";
+              const trendColor = diff > 0 ? "#16a34a" : diff < 0 ? "#dc2626" : "#6b7280";
+              return (
+                <div className="rate-row" role="row" key={code} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.9fr 1fr", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee" }}>
+                  <span><i>{code}</i><b>{name}</b></span>
+                  <strong>{buy.toLocaleString("en-US")}</strong>
+                  <strong>{sell.toLocaleString("en-US")}</strong>
+                  <span style={{ color: trendColor, fontWeight: 700 }}>{diff > 0 ? `+${diff}` : diff}</span>
+                  <span style={{ color: trendColor, fontWeight: 700 }}>{trend}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="unavailable-state"><AlertTriangle /><b>لا توجد أسعار معتمدة حالياً</b><p>ستظهر أسعار الصرف المعتمدة وحاسبة التحويل فور اعتمادها من الإدارة في Firebase.</p></div>
+      )}
+      <Button onClick={() => fetchRates(false)} disabled={loading}>{loading ? <><span className="spinner" /> جارٍ التحديث...</> : <><RefreshCw /> تحديث الأسعار من الخادم</>}</Button>
     </section>
 
     <section className={`panel currency-calculator ${!data ? "disabled" : ""}`}>
       <h2>حاسبة تحويل العملات</h2>
       <p>تعتمد النتيجة حصريًا على الأسعار المعتمدة لسوق عدن (الشراء للتحويل إلى يمني، البيع للشراء باليمني).</p>
-      <div className="calculator-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", margin: "14px 0" }}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 my-3.5">
         <label>المبلغ<input type="number" min="0" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" disabled={!data} /></label>
         <label>من العملة<select value={fromCurr} onChange={(event) => setFromCurr(event.target.value as any)} disabled={!data}><option value="SAR">SAR — ريال سعودي</option><option value="USD">USD — دولار أمريكي</option><option value="YER">YER — ريال يمني</option></select></label>
         <label>إلى العملة<select value={toCurr} onChange={(event) => setToCurr(event.target.value as any)} disabled={!data}><option value="YER">YER — ريال يمني</option><option value="SAR">SAR — ريال سعودي</option><option value="USD">USD — دولار أمريكي</option></select></label>
@@ -3087,16 +3818,18 @@ function ShareEarn() {
     link: string; successfulInvites: number; eligibleReferrals: number;
     earned: number; paid: number; history: Array<{ establishment: string; status: string; date: string }>;
   };
-  const visitorEmail = safeStorage.getItem("yafa-visitor-auth") || safeStorage.getItem("yafa-user-email") || auth.currentUser?.email || "";
+  const [visitorEmail, setVisitorEmail] = useState("");
   const [referralData, setReferralData] = useState<ReferralSummary | null>(null);
 
   useEffect(() => {
+    const email = safeStorage.getItem("yafa-visitor-auth") || safeStorage.getItem("yafa-user-email") || auth.currentUser?.email || "";
+    setVisitorEmail(email);
     const origin = typeof window !== "undefined" ? window.location.origin : "https://yafaone.app";
-    if (!visitorEmail && !auth.currentUser) {
+    if (!email && !auth.currentUser) {
       setReferralData(null);
       return;
     }
-    const uid = auth.currentUser?.uid || visitorEmail.replace(/[^a-z0-9]/gi, "").slice(0, 10) || "yafa";
+    const uid = auth.currentUser?.uid || email.replace(/[^a-z0-9]/gi, "").slice(0, 10) || "yafa";
     const link = `${origin}/owner/signup?ref=${encodeURIComponent(uid)}`;
     const adminRefs = loadAdminSectionData("referrals");
     const history = adminRefs.map((r) => ({
@@ -3113,7 +3846,7 @@ function ShareEarn() {
       paid: 0,
       history,
     });
-  }, [visitorEmail]);
+  }, []);
 
   const getShareUrl = () => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
@@ -3126,8 +3859,14 @@ function ShareEarn() {
   const shareReferral = (channel: "whatsapp" | "facebook" | "system") => {
     const link = getShareUrl();
     const text = `انضم إلى منصة يافع ون وسجّل منشأتك عبر رابط دعوتي: ${link}`;
-    if (channel === "whatsapp") window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
-    if (channel === "facebook") window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}`, "_blank", "noopener,noreferrer");
+    if (channel === "whatsapp") {
+      const popup = window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+      if (!popup) shareOrCopy("يافع ون", text, link);
+    }
+    if (channel === "facebook") {
+      const popup = window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}`, "_blank", "noopener,noreferrer");
+      if (!popup) shareOrCopy("يافع ون", text, link);
+    }
     if (channel === "system") shareOrCopy("يافع ون", text, link);
   };
   const appImages = useAppImages();
@@ -4639,7 +5378,7 @@ function OwnerReports({ setRole }: { setRole: (r: Role) => void }) {
   const [currency, setCurrency] = useState<"YER" | "SAR" | "USD">("YER");
   const [products, setProducts] = useState<OwnerProduct[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
-  const [rates, setRates] = useState<ExchangeRateData>(DEFAULT_EXCHANGE_RATES);
+  const [rates, setRates] = useState<ExchangeRateData | null>(null);
 
   useEffect(() => {
     setProducts(loadOwnerProducts());
@@ -4647,14 +5386,15 @@ function OwnerReports({ setRole }: { setRole: (r: Role) => void }) {
     setRates(loadExchangeRates());
   }, []);
 
+  const activeRates = rates || DEFAULT_EXCHANGE_RATES;
   const convertAmount = (yerAmount: number) => {
-    if (currency === "SAR") return Math.round((yerAmount / Math.max(1, rates.rates.SAR.sell)) * 100) / 100;
-    if (currency === "USD") return Math.round((yerAmount / Math.max(1, rates.rates.USD.sell)) * 100) / 100;
+    if (currency === "SAR") return Math.round((yerAmount / Math.max(1, activeRates.rates.SAR.sell)) * 100) / 100;
+    if (currency === "USD") return Math.round((yerAmount / Math.max(1, activeRates.rates.USD.sell)) * 100) / 100;
     return Math.round(yerAmount);
   };
 
   const rawInventoryYer = products.reduce((sum, p) => {
-    const mult = p.currency === "SAR" ? rates.rates.SAR.sell : p.currency === "USD" ? rates.rates.USD.sell : 1;
+    const mult = p.currency === "SAR" ? activeRates.rates.SAR.sell : p.currency === "USD" ? activeRates.rates.USD.sell : 1;
     return sum + p.price * p.stock * mult;
   }, 0);
   const rawSalesYer = orders.filter((o) => o.status !== "ملغي" && o.status !== "cancelled").reduce((sum, o) => sum + (Number(o.total) || 0), 0);
@@ -4905,9 +5645,6 @@ function OwnerPreview() {
 
 function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
   const [ownerName, setOwnerName] = useState("");
-  const [establishmentName, setEstablishmentName] = useState("");
-  const [district, setDistrict] = useState("لبعوس");
-  const [activity, setActivity] = useState("متجر تجاري");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -4919,11 +5656,11 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
 
   useEffect(() => {
     setOwnerName(safeStorage.getItem("yafa-draft-owner-name") || "");
-    setEstablishmentName(safeStorage.getItem("yafa-draft-est-name") || "");
   }, []);
 
   const sendOwnerOtp = async () => {
-    if (!phone.trim()) return setError("أدخل رقم الجوال اليمني أولاً.");
+    const formattedPhone = formatYemeniSubmitPhone(phone);
+    if (!formattedPhone) return setError("أدخل رقم واتساب اليمني أولاً.");
     setError("");
     setInfoMsg("");
     setOtpLoading(true);
@@ -4932,14 +5669,14 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
         credentials: "include",
-        body: JSON.stringify({ role: "owner", phone: phone.trim(), purpose: "register" }),
+        body: JSON.stringify({ role: "owner", phone: formattedPhone, purpose: "register" }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.success) {
         return setError(json?.error || "تعذر إرسال رمز واتساب OTP.");
       }
       setOtpSent(true);
-      setInfoMsg("تم إرسال رمز التحقق إلى رقم جوالك عبر واتساب.");
+      setInfoMsg("تم إرسال رمز التحقق إلى رقمك عبر واتساب.");
       toastMessage("تم إرسال رمز التحقق عبر واتساب");
     } catch {
       setError("تعذر الاتصال بخادم التحقق.");
@@ -4950,23 +5687,32 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
 
   const handleSignupSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!ownerName.trim() || !establishmentName.trim() || !phone.trim() || password.length < 6 || !otp.trim()) {
-      return setError("يرجى ملء جميع الحقول وإكمال التحقق برمز واتساب OTP.");
+    const formattedPhone = formatYemeniSubmitPhone(phone);
+    if (!ownerName.trim() || !formattedPhone || password.length < 6 || !otp.trim()) {
+      return setError("يرجى إدخال الاسم الكامل ورقم واتساب وكلمة المرور وإكمال التحقق بالرمز.");
     }
     setError("");
     setInfoMsg("");
     setSubmitting(true);
     try {
+      const oName = ownerName.trim() || "صاحب المنشأة";
+      const estTitle = safeStorage.getItem("yafa-draft-est-name")?.trim() || `منشأة ${oName}`;
+      const district = "لبعوس";
+      const activity = "متجر تجاري";
+
       const regRes = await fetch("/api/auth/phone-register", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
         credentials: "include",
         body: JSON.stringify({
           role: "owner",
-          name: ownerName.trim(),
-          phone: phone.trim(),
+          name: oName,
+          phone: formattedPhone,
           password,
-          otp: otp.trim(),
+          otpCode: otp.trim(),
+          establishmentName: estTitle,
+          district,
+          activity,
         }),
       });
       const regJson = await regRes.json().catch(() => null);
@@ -4974,14 +5720,14 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
         throw new Error(regJson?.error || "تعذر إنشاء حساب صاحب المنشأة.");
       }
 
-      const normalizedPhone = regJson.user?.phone || phone.trim();
+      const normalizedPhone = regJson.user?.phone || formattedPhone;
       const fbUser = await syncFirebaseBridgeClient(regJson.fbBridgeEmail, regJson.fbBridgeSecret);
       const uid = fbUser?.uid || "";
 
       if (uid) {
         await setDoc(doc(db, "users", uid), {
           uid,
-          name: ownerName.trim(),
+          name: oName,
           phoneNumber: normalizedPhone,
           role: "owner",
           status: "active",
@@ -4989,9 +5735,7 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
         }, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${uid}`));
       }
 
-      const estTitle = establishmentName.trim() || "منشأة جديدة";
-      const oName = ownerName.trim() || "صاحب المنشأة";
-      const estId = `EST-${Date.now().toString().slice(-5)}`;
+      const estId = regJson.user?.establishmentId || `EST-${Date.now().toString().slice(-5)}`;
 
       const newEst: AdminRecordItem = {
         id: estId,
@@ -5004,6 +5748,7 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
       const existing = loadAdminSectionData("establishments");
       saveAdminSectionData("establishments", [newEst, ...existing]);
 
+      safeStorage.removeItem("yafa-visitor-auth");
       safeStorage.setItem("yafa-owner-est-id", estId);
       safeStorage.setItem("yafa-owner-phone", normalizedPhone);
       safeStorage.setItem("yafa-draft-owner-name", oName);
@@ -5052,42 +5797,88 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
     }
   };
 
-  return <main className="auth-page">
-    <TopBar back="/auth/owner-login" />
-    <div className="auth-shell">
-      <Brand />
-      <h1>إنشاء حساب صاحب منشأة</h1>
-      <p>تسجيل منشأتك في يافع مجاني 100% وبرقم الجوال وكلمة المرور</p>
+  return (
+    <YafaAuthScreenFrame title="إنشاء حساب صاحب المنشأة" onBack={() => route("/auth/owner-login")}>
       {error && <div className="alert error"><AlertTriangle />{error}</div>}
       {infoMsg && <div className="alert success"><Check />{infoMsg}</div>}
-      <form onSubmit={handleSignupSubmit}>
-        <label>اسم صاحب المنشأة *<input required value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder="مثال: صالح اليافعي" /></label>
-        <label>اسم المنشأة أو المتجر *<input required value={establishmentName} onChange={(e) => setEstablishmentName(e.target.value)} placeholder="مثال: عسل يافع الطبيعي" /></label>
-        <div className="form-grid">
-          <label>المديرية *
-            <select value={district} onChange={(e) => setDistrict(e.target.value)}>
-              {yafaDistricts.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </label>
-          <label>النشاط التجاري *
-            <select value={activity} onChange={(e) => setActivity(e.target.value)}>
-              <option value="متجر تجاري">متجر تجاري عام</option>
-              {homeActivities.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
-            </select>
-          </label>
-        </div>
-        <label>رقم الجوال *<input type="tel" inputMode="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="77xxxxxxx أو 9677xxxxxxxx" /></label>
-        <label>كلمة المرور (6 أحرف على الأقل) *<input type="password" minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" /></label>
-        <Button type="button" kind="outline" disabled={otpLoading} onClick={sendOwnerOtp}>
-          {otpLoading ? "جارٍ الإرسال..." : otpSent ? "إعادة إرسال رمز واتساب" : "إرسال رمز التحقق عبر واتساب"}
-        </Button>
-        {otpSent && (
-          <label>رمز التحقق المرسل عبر واتساب (6 أرقام) *<input type="text" inputMode="numeric" maxLength={6} required value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="123456" /></label>
+      <form className="yafa-auth-form" onSubmit={handleSignupSubmit}>
+        <label className="yafa-auth-label">
+          الاسم الكامل
+          <input
+            className="yafa-auth-input"
+            value={ownerName}
+            onChange={(e) => setOwnerName(e.target.value)}
+            autoComplete="name"
+            required
+          />
+        </label>
+        <label className="yafa-auth-label">
+          رقم واتساب
+          <input
+            className="yafa-auth-input"
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            style={{ textAlign: "right" }}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            autoComplete="tel"
+            required
+          />
+        </label>
+        <label className="yafa-auth-label">
+          كلمة المرور
+          <YafaPasswordField value={password} onChange={setPassword} minLength={6} autoComplete="new-password" />
+        </label>
+        {!otpSent ? (
+          <button
+            type="button"
+            className="yafa-auth-primary-btn"
+            disabled={otpLoading}
+            onClick={sendOwnerOtp}
+          >
+            {otpLoading ? <><span className="spinner" /> جارٍ الإرسال...</> : "إرسال رمز التحقق"}
+          </button>
+        ) : (
+          <>
+            <label className="yafa-auth-label">
+              رمز التحقق عبر واتساب
+              <input
+                className="yafa-auth-input text-center tracking-[0.35em]"
+                type="text"
+                inputMode="numeric"
+                dir="ltr"
+                maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                placeholder="••••••"
+                required
+              />
+            </label>
+            <button type="submit" className="yafa-auth-primary-btn" disabled={submitting}>
+              {submitting ? <><span className="spinner" /> جارٍ الإنشاء...</> : "تأكيد وإنشاء الحساب"}
+            </button>
+            <button
+              type="button"
+              className="yafa-auth-gold-link"
+              disabled={otpLoading}
+              onClick={sendOwnerOtp}
+            >
+              {otpLoading ? "جارٍ الإرسال..." : "إعادة إرسال رمز التحقق"}
+            </button>
+          </>
         )}
-        <Button type="submit" disabled={submitting || !otpSent}>{submitting ? "جارٍ التنفيذ..." : "إنشاء الحساب والدخول للوحة التحكم"}</Button>
+        <div className="yafa-auth-links-stack">
+          <button type="button" className="yafa-auth-gold-link" onClick={() => route("/auth/owner-login")}>
+            لديك حساب؟ دخول
+          </button>
+          <button type="button" className="yafa-auth-gold-link" onClick={() => route("/visitor/home")}>
+            متابعة كزائر
+          </button>
+        </div>
       </form>
-    </div>
-  </main>;
+    </YafaAuthScreenFrame>
+  );
 }
 
 // -------------------------------------------------------------
@@ -6657,49 +7448,53 @@ function AdminPage({ type, setRole }: { type: string; setRole: (r: Role) => void
 }
 
 function ExchangeRateAdmin() {
-  const [current, setCurrent] = useState<ExchangeRateData>(DEFAULT_EXCHANGE_RATES);
+  const [current, setCurrent] = useState<ExchangeRateData | null>(null);
   const [source, setSource] = useState(DEFAULT_EXCHANGE_RATES.source || "سوق عدن المالي - جنوب اليمن (معتمد رسمياً)");
   const [adminName, setAdminName] = useState(DEFAULT_EXCHANGE_RATES.adminName || "المدير العام ماجد التركي");
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(DEFAULT_EXCHANGE_RATES.autoUpdateEnabled ?? false);
   const [values, setValues] = useState({
-    sarBuy: String(DEFAULT_EXCHANGE_RATES.rates.SAR.buy),
-    sarSell: String(DEFAULT_EXCHANGE_RATES.rates.SAR.sell),
-    usdBuy: String(DEFAULT_EXCHANGE_RATES.rates.USD.buy),
-    usdSell: String(DEFAULT_EXCHANGE_RATES.rates.USD.sell),
+    sarBuy: "",
+    sarSell: "",
+    usdBuy: "",
+    usdSell: "",
   });
   const [saving, setSaving] = useState(false);
-  const [history, setHistory] = useState(DEFAULT_EXCHANGE_RATES.history || []);
+  const [history, setHistory] = useState<Array<{ timestamp: string; adminName: string; source: string; summary: string }>>([]);
 
   useEffect(() => {
+    const applyLoaded = (d: ExchangeRateData) => {
+      setCurrent(d);
+      setSource(d.source);
+      setAdminName(d.adminName || "المدير العام ماجد التركي");
+      setAutoUpdateEnabled(Boolean(d.autoUpdateEnabled));
+      setValues({
+        sarBuy: String(d.rates.SAR.buy),
+        sarSell: String(d.rates.SAR.sell),
+        usdBuy: String(d.rates.USD.buy),
+        usdSell: String(d.rates.USD.sell),
+      });
+      setHistory(d.history || []);
+    };
+
     const localRates = loadExchangeRates();
-    setCurrent(localRates);
-    setSource(localRates.source || "سوق عدن المالي - جنوب اليمن (معتمد رسمياً)");
-    setAdminName(localRates.adminName || "المدير العام ماجد التركي");
-    setAutoUpdateEnabled(Boolean(localRates.autoUpdateEnabled));
-    setValues({
-      sarBuy: String(localRates.rates.SAR.buy),
-      sarSell: String(localRates.rates.SAR.sell),
-      usdBuy: String(localRates.rates.USD.buy),
-      usdSell: String(localRates.rates.USD.sell),
-    });
-    setHistory(localRates.history || []);
+    if (localRates) applyLoaded(localRates);
+
+    getDoc(doc(db, "settings", "exchangeRates"))
+      .then((snap) => {
+        if (snap.exists() && isValidApprovedRateDoc(snap.data())) {
+          const d = snap.data() as ExchangeRateData;
+          applyLoaded(d);
+          safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(d));
+        }
+      })
+      .catch(() => {});
 
     fetch("/api/exchange-rates")
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
-        if (json?.success && json?.data) {
+        if (json?.success && json?.approved === true && isValidApprovedRateDoc(json?.data)) {
           const d = json.data as ExchangeRateData;
-          setCurrent(d);
-          setSource(d.source);
-          setAdminName(d.adminName || "المدير العام ماجد التركي");
-          setAutoUpdateEnabled(Boolean(d.autoUpdateEnabled));
-          setValues({
-            sarBuy: String(d.rates.SAR.buy),
-            sarSell: String(d.rates.SAR.sell),
-            usdBuy: String(d.rates.USD.buy),
-            usdSell: String(d.rates.USD.sell),
-          });
-          setHistory(d.history || []);
+          applyLoaded(d);
           safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(d));
         }
       })
@@ -6722,6 +7517,7 @@ function ExchangeRateAdmin() {
         source: source.trim(),
         adminName: adminName.trim(),
         autoUpdateEnabled,
+        approved: true,
         updatedAt: new Date().toISOString(),
       };
 
@@ -6736,12 +7532,13 @@ function ExchangeRateAdmin() {
       });
       const ct = res.headers.get("content-type");
       const json = ct && ct.includes("application/json") ? await res.json() : null;
-      if (res.ok && json && json.success) {
-        setCurrent(json.data);
-        safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(json.data));
-        setHistory(json.data.history || []);
+      if (res.ok && json && json.success && json.data) {
+        const approvedDoc: ExchangeRateData = { ...json.data, approved: true };
+        setCurrent(approvedDoc);
+        safeStorage.setItem(exchangeRateStorageKey, JSON.stringify(approvedDoc));
+        setHistory(approvedDoc.history || []);
         if (auth.currentUser) {
-          await setDoc(doc(db, "settings", "exchangeRates"), json.data, { merge: true }).catch(() => {});
+          await setDoc(doc(db, "settings", "exchangeRates"), approvedDoc, { merge: true }).catch(() => {});
         }
         window.dispatchEvent(new Event("yafa-exchange-rates-updated"));
         recordAdminAudit("نشر أسعار الصرف", "إدارة أسعار الصرف", `SAR ${numeric[0]}/${numeric[1]} · USD ${numeric[2]}/${numeric[3]}`);
@@ -7542,7 +8339,7 @@ function VisitorProfessionalsPage() {
   const defaultAvatar = resolveSlotPrimaryImage(
     appImages,
     "professionals_default_avatar",
-    resolveSlotPrimaryImage(appImages, "activity_card_professionals", "/assets/activities/maintenance.jpg"),
+    resolveSlotPrimaryImage(appImages, "activity_card_professionals", "/assets/aistudio/file_000000009dfc8210a5ae82f9f4fd9107_aff3db0e.png"),
   );
 
   const [selectedSpecialty, setSelectedSpecialty] = useState<string>("الكل");
@@ -7703,15 +8500,7 @@ function VisitorProfessionalsPage() {
 
   return (
     <VisitorShell>
-      <ScenicHero
-        title="أصحاب المهن والحرفيون"
-        subtitle="دليل الكهربائيين والسباكين والنجارين والمقاولين والمهنيين في مديريات يافع"
-        icon={<Wrench />}
-        image={profBanner}
-        activity
-      />
-
-      <div className="panel" style={{ display: "grid", gap: "10px", marginBottom: "12px" }}>
+      <div className="panel" style={{ display: "grid", gap: "10px", marginBottom: "12px", marginTop: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <div>
             <b style={{ color: "var(--forest)", fontSize: "14px", display: "block" }}>تصفية حسب التخصص والمديرية</b>
@@ -8019,6 +8808,19 @@ export default function App() {
           setSessionVerifiedAdmin(false);
           setRole("owner");
           safeStorage.setItem("yafa-role", "owner");
+          if (json.phone) safeStorage.setItem("yafa-owner-phone", json.phone);
+          if (json.name) safeStorage.setItem("yafa-draft-owner-name", json.name);
+        } else if (serverRole === "visitor") {
+          setSessionVerifiedAdmin(false);
+          if (json.phone) {
+            safeStorage.setItem("yafa-visitor-auth", json.phone);
+            safeStorage.setItem("yafa-customer-phone", json.phone);
+          }
+          if (json.name) safeStorage.setItem("yafa-customer-name", json.name);
+          if (role === "owner" || role === "admin") {
+            setRole(null);
+            safeStorage.removeItem("yafa-role");
+          }
         } else {
           setSessionVerifiedAdmin(false);
           if (role === "owner" || role === "admin") {
@@ -8079,7 +8881,7 @@ export default function App() {
       if (effectiveRole !== "admin" || !sessionVerifiedAdmin) return <PortalGate portal="admin" path={cleanPath} />;
       return <Audit />;
     }
-    if (cleanPath === "/auth/visitor-login") return <VisitorLoginPrompt />;
+    if (cleanPath === "/auth/visitor-login") return <VisitorLoginPrompt setRole={setRole} />;
     if (cleanPath === "/auth/owner-login") return <Auth kind="owner" setRole={setRole} />;
     if (cleanPath === "/auth/admin-login") return <Auth kind="admin" setRole={setRole} />;
     if (cleanPath === "/owner/signup") return <SignupFlow setRole={setRole} />;

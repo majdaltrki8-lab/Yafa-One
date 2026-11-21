@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
 
     const res = resetPhonePasswordWithOtp({
       phoneRaw: String(body?.phone || ''),
-      otpCode: String(body?.otpCode || ''),
+      otpCode: String(body?.otpCode || body?.otp || ''),
       newPassword: String(body?.newPassword || ''),
       role,
     })

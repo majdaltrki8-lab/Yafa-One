@@ -65,7 +65,7 @@ export const defaultAppearance: AppAppearance = {
     platformTagline: 'من الجبل إلى بيتك',
     logoText: 'يافع ون',
     appIconUrl: '/icons/icon-512.png',
-    welcomeBannerUrl: '/assets/carousel/welcome.jpg',
+    welcomeBannerUrl: '/assets/yafa-banner-clean.jpg',
     scenicLandscapeUrl: '/assets/yafa-mountains.jpg',
   },
   sections: [

@@ -3,26 +3,56 @@ import crypto from 'crypto'
 import config from '@payload-config'
 import { getPayload } from 'payload'
 
-// Server-side exchange rates storage with Aden market rates, previous prices, auto-update toggle, and audit history
-let serverExchangeRates = {
+// Server-side exchange rates cache (only treated as approved after reading Firebase or verified Admin POST)
+let hasApprovedServerState = false;
+let serverExchangeRates: {
   rates: {
-    SAR: { buy: 411, sell: 413, prevBuy: 410, prevSell: 412 },
-    USD: { buy: 1568, sell: 1579, prevBuy: 1565, prevSell: 1575 },
-  },
-  source: 'سوق عدن المالي - جنوب اليمن (معتمد رسمياً)',
-  updatedAt: new Date().toISOString(),
-  adminName: 'المدير العام ماجد التركي',
-  autoUpdateEnabled: false,
-  updateIntervalMinutes: 15,
-  history: [
-    {
-      timestamp: new Date().toISOString(),
-      adminName: 'المدير العام ماجد التركي',
-      source: 'سوق عدن المالي - جنوب اليمن',
-      summary: 'التحديث المرجعي المعتمد (السعودي: 411/413، الدولار: 1568/1579)',
-    }
-  ],
-};
+    SAR: { buy: number; sell: number; prevBuy?: number; prevSell?: number };
+    USD: { buy: number; sell: number; prevBuy?: number; prevSell?: number };
+  };
+  source: string;
+  updatedAt: string;
+  adminName: string;
+  autoUpdateEnabled: boolean;
+  updateIntervalMinutes: number;
+  approved: boolean;
+  history: Array<{ timestamp: string; adminName: string; source: string; summary: string }>;
+} | null = null;
+
+function normalizeIsoTimestamp(val: any): string {
+  if (!val) return '';
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  }
+  if (typeof val?.toDate === 'function') {
+    const d = val.toDate();
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  }
+  if (typeof val?.seconds === 'number') {
+    const d = new Date(val.seconds * 1000);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  }
+  return '';
+}
+
+function isValidApprovedRates(candidate: any): boolean {
+  if (!candidate || typeof candidate !== 'object') return false;
+  if (candidate.approved !== true) return false;
+  const sarBuy = Number(candidate?.rates?.SAR?.buy);
+  const sarSell = Number(candidate?.rates?.SAR?.sell);
+  const usdBuy = Number(candidate?.rates?.USD?.buy);
+  const usdSell = Number(candidate?.rates?.USD?.sell);
+  const iso = normalizeIsoTimestamp(candidate.updatedAt);
+  return (
+    Number.isFinite(sarBuy) && sarBuy > 0 &&
+    Number.isFinite(sarSell) && sarSell > 0 &&
+    Number.isFinite(usdBuy) && usdBuy > 0 &&
+    Number.isFinite(usdSell) && usdSell > 0 &&
+    Boolean(iso) &&
+    iso !== '2026-01-01T00:00:00.000Z'
+  );
+}
 
 // Cryptographic admin key derived strictly on server from secret (never exposed to client)
 function getServerSecret(): string {
@@ -111,11 +141,9 @@ async function verifyAdminAuth(req: NextRequest, bodyKey?: string): Promise<{ au
 /**
  * In-memory rate limiter with sliding/fixed window cleanup.
  * NOTE: This rate limiter is local to the current server instance (In-Memory).
- * It does not persist across container/server restarts or across multiple horizontally scaled replicas (no external Redis/Firebase used).
  */
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
 
-// Cleanup expired entries periodically to prevent unbounded memory growth
 function cleanupRateLimits() {
   const now = Date.now();
   for (const [key, value] of rateLimitMap.entries()) {
@@ -126,10 +154,9 @@ function cleanupRateLimits() {
 }
 
 function checkRateLimit(req: NextRequest, action: 'GET' | 'POST', maxRequests: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
-  // Extract client IP securely (taking first IP in x-forwarded-for if proxied)
   const forwardedFor = req.headers.get('x-forwarded-for');
   const ip = forwardedFor ? forwardedFor.split(',')[0].trim() : (req.headers.get('x-real-ip') || '127.0.0.1');
-  
+
   const now = Date.now();
   cleanupRateLimits();
 
@@ -151,11 +178,11 @@ function checkRateLimit(req: NextRequest, action: 'GET' | 'POST', maxRequests: n
 }
 
 export async function GET(req: NextRequest) {
-  const limitCheck = checkRateLimit(req, 'GET', 60, 60000); // 60 requests per minute per IP
+  const limitCheck = checkRateLimit(req, 'GET', 60, 60000);
   if (!limitCheck.allowed) {
     return NextResponse.json(
       { success: false, error: 'تم تجاوز الحد المسموح من الطلبات. يرجى المحاولة لاحقاً.', code: 'RATE_LIMIT_EXCEEDED' },
-      { 
+      {
         status: 429,
         headers: { 'Retry-After': String(limitCheck.retryAfterSeconds) }
       }
@@ -168,29 +195,48 @@ export async function GET(req: NextRequest) {
     const snap = await getDoc(doc(db, 'settings', 'exchangeRates'));
     if (snap.exists()) {
       const fbData = snap.data() as any;
-      if (fbData?.rates?.SAR && fbData?.rates?.USD) {
-        serverExchangeRates = {
-          ...serverExchangeRates,
+      if (isValidApprovedRates(fbData)) {
+        const normalized = {
           ...fbData,
+          approved: true,
         };
+        serverExchangeRates = normalized;
+        hasApprovedServerState = true;
+        return NextResponse.json({
+          success: true,
+          approved: true,
+          source: 'firebase',
+          data: normalized,
+        });
       }
     }
   } catch {
-    // fallback to server memory
+    // Fall through to in-memory verified state if any
+  }
+
+  if (hasApprovedServerState && serverExchangeRates && isValidApprovedRates(serverExchangeRates)) {
+    return NextResponse.json({
+      success: true,
+      approved: true,
+      source: 'server',
+      data: serverExchangeRates,
+    });
   }
 
   return NextResponse.json({
     success: true,
-    data: serverExchangeRates,
+    approved: false,
+    source: 'none',
+    data: null,
   });
 }
 
 export async function POST(req: NextRequest) {
-  const limitCheck = checkRateLimit(req, 'POST', 10, 60000); // 10 requests per minute per IP
+  const limitCheck = checkRateLimit(req, 'POST', 10, 60000);
   if (!limitCheck.allowed) {
     return NextResponse.json(
       { success: false, error: 'تم تجاوز الحد المسموح من طلبات التعديل. يرجى المحاولة لاحقاً.', code: 'RATE_LIMIT_EXCEEDED' },
-      { 
+      {
         status: 429,
         headers: { 'Retry-After': String(limitCheck.retryAfterSeconds) }
       }
@@ -213,7 +259,7 @@ export async function POST(req: NextRequest) {
         { status: 401 }
       );
     }
-    
+
     if (!rates || !rates.SAR || !rates.USD || !source) {
       return NextResponse.json({ success: false, error: 'بيانات غير مكتملة' }, { status: 400 });
     }
@@ -231,11 +277,10 @@ export async function POST(req: NextRequest) {
     const currentAdmin = String(adminName || 'المدير العام ماجد التركي');
     const currentSource = String(source).trim();
 
-    // Store previous prices before updating
-    const prevSarBuy = serverExchangeRates.rates.SAR.buy;
-    const prevSarSell = serverExchangeRates.rates.SAR.sell;
-    const prevUsdBuy = serverExchangeRates.rates.USD.buy;
-    const prevUsdSell = serverExchangeRates.rates.USD.sell;
+    const prevSarBuy = serverExchangeRates?.rates.SAR.buy ?? newSarBuy;
+    const prevSarSell = serverExchangeRates?.rates.SAR.sell ?? newSarSell;
+    const prevUsdBuy = serverExchangeRates?.rates.USD.buy ?? newUsdBuy;
+    const prevUsdSell = serverExchangeRates?.rates.USD.sell ?? newUsdSell;
 
     const historyEntry = {
       timestamp: now,
@@ -254,23 +299,26 @@ export async function POST(req: NextRequest) {
       adminName: currentAdmin,
       autoUpdateEnabled: Boolean(autoUpdateEnabled),
       updateIntervalMinutes: 15,
-      history: [historyEntry, ...(serverExchangeRates.history || [])].slice(0, 20),
+      approved: true,
+      history: [historyEntry, ...(serverExchangeRates?.history || [])].slice(0, 20),
     };
+    hasApprovedServerState = true;
 
     try {
       const { db } = await import('@/lib/firebase');
       const { doc, setDoc } = await import('firebase/firestore');
       await setDoc(doc(db, 'settings', 'exchangeRates'), serverExchangeRates);
     } catch {
-      // Non-fatal if server lacks Firebase user token; client admin session also syncs
+      // Client admin session also persists directly to Firestore with admin token
     }
 
     return NextResponse.json({
       success: true,
+      approved: true,
       data: serverExchangeRates,
       message: 'تم تحديث ونشر أسعار الصرف الرسمية بنجاح لجميع المستخدمين',
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ success: false, error: 'خطأ في معالجة طلب تحديث الأسعار' }, { status: 500 });
   }
 }

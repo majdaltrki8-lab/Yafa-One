@@ -111,14 +111,6 @@ function LoadingFallback() {
             >
               <Store style={{ width: 14, height: 14 }} /> صاحب المنشأة
             </button>
-            <button
-              className="btn btn-outline"
-              type="button"
-              onClick={() => navigateSafely('/admin/dashboard')}
-              style={{ minHeight: 36, padding: '6px 12px', fontSize: '12px' }}
-            >
-              <KeyRound style={{ width: 14, height: 14 }} /> لوحة الإدارة
-            </button>
           </div>
         </div>
       )}

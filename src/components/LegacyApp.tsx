@@ -1809,15 +1809,29 @@ function VisitorHome() {
     setDistrict(safeStorage.getItem("yafa-district") || "لبعوس");
     setRatesLoading(true);
     setRatesError(false);
+
     const local = loadExchangeRates();
     if (local) {
       setLiveRates(local);
       setRatesLoading(false);
     }
 
+    // Safety timeout to prevent getting stuck on "جار التحميل..."
+    const loadingTimeout = window.setTimeout(() => {
+      setRatesLoading((prev) => {
+        if (prev) {
+          return false;
+        }
+        return prev;
+      });
+    }, 1800);
+
     const syncFromApi = () => {
-      fetch("/api/exchange-rates")
+      const ctrl = new AbortController();
+      const tId = setTimeout(() => ctrl.abort(), 3000);
+      fetch("/api/exchange-rates", { signal: ctrl.signal })
         .then((res) => {
+          clearTimeout(tId);
           if (!res.ok) throw new Error("Failed to fetch");
           return res.json();
         })
@@ -1834,6 +1848,7 @@ function VisitorHome() {
           setRatesError(false);
         })
         .catch(() => {
+          clearTimeout(tId);
           setRatesError(true);
           setRatesLoading(false);
         });
@@ -1859,6 +1874,7 @@ function VisitorHome() {
       () => {
         setRatesError(true);
         setRatesLoading(false);
+        syncFromApi();
       },
     );
 
@@ -1866,6 +1882,7 @@ function VisitorHome() {
       const localApproved = loadExchangeRates();
       if (localApproved) {
         setLiveRates(localApproved);
+        setRatesLoading(false);
       } else {
         syncFromApi();
       }
@@ -1873,6 +1890,7 @@ function VisitorHome() {
 
     window.addEventListener("yafa-exchange-rates-updated", onRatesUpdated);
     return () => {
+      clearTimeout(loadingTimeout);
       unsubRates();
       window.removeEventListener("yafa-exchange-rates-updated", onRatesUpdated);
     };
@@ -1960,56 +1978,99 @@ function VisitorHome() {
                   : "لا يوجد تحديث معتمد";
               return (
                 <div key="quickActivitiesWithRates">
-                  <section className="home-section" key="exchangeRatesTop" aria-labelledby="home-exchange-rates-title">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => route("/visitor/exchange-rates")}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          route("/visitor/exchange-rates");
-                        }
-                      }}
-                      aria-label="أسعار الصرف — اضغط لفتح صفحة أسعار الصرف"
-                      className="bg-[#064B3D] text-white rounded-2xl px-4 py-3.5 shadow-[0_8px_24px_rgba(6,75,61,0.16)] border border-[#c7942c]/30 cursor-pointer flex items-center justify-between gap-3 my-3 w-full transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#c7942c]"
-                    >
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Clock className="w-5 h-5 text-[#c7942c]" />
-                        <h3 id="home-exchange-rates-title" className="m-0 font-extrabold text-sm sm:text-base text-white">
-                          الصرف
-                        </h3>
-                      </div>
+                  <section className="home-section my-3" key="exchangeRatesTop" aria-labelledby="home-exchange-rates-title">
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <h3 id="home-exchange-rates-title" className="m-0 font-extrabold text-sm sm:text-base text-[#064B3D] flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-[#c7942c]" /> أسعار الصرف – جنوب اليمن
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => route("/visitor/exchange-rates")}
+                        className="text-xs font-bold text-[#064B3D] hover:underline flex items-center gap-1 bg-[#e8f2ee] px-3 py-1 rounded-full shadow-xs"
+                      >
+                        <span>التفاصيل</span>
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
 
-                      <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm font-bold">
+                    <div className="grid grid-cols-2 gap-3 w-full" dir="rtl">
+                      {/* Saudi Riyal Card (Right) */}
+                      <div
+                        onClick={() => route("/visitor/exchange-rates")}
+                        className="bg-white rounded-2xl p-3.5 sm:p-4 border border-[#e2e8f0] shadow-xs cursor-pointer hover:border-[#064b3d]/40 transition-all flex flex-col justify-between"
+                      >
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-100">
+                          <span className="font-extrabold text-xs sm:text-sm text-[#064B3D]" style={{ color: "#064b3d" }}>
+                            الريال السعودي 🇸🇦
+                          </span>
+                        </div>
+
                         {ratesLoading ? (
-                          <span className="text-[#f5ead0]/90">جارٍ التحميل...</span>
-                        ) : ratesError ? (
-                          <span className="text-[#f5ead0]/90">تعذّر تحميل الأسعار</span>
-                        ) : !isApprovedRates ? (
-                          <span className="text-[#f5ead0]/90">بانتظار اعتماد الأسعار</span>
+                          <div className="text-center py-4 text-xs text-slate-500">جارِ التحميل...</div>
+                        ) : !isApprovedRates || !liveRates ? (
+                          <div className="text-center py-4 text-xs text-amber-700 font-bold">السعر غير متوفر</div>
                         ) : (
-                          <>
-                            <div className="flex items-center gap-1.5" dir="rtl">
-                              <span className="text-[#f5ead0]/90">سعودي</span>
-                              <span className="text-white font-extrabold tabular-nums" dir="ltr">
+                          <div className="grid grid-cols-2 text-center divide-x divide-x-reverse divide-slate-100 items-center">
+                            {/* Buy (Right) */}
+                            <div className="px-1 flex flex-col items-center">
+                              <span className="text-[11px] text-slate-400 mb-0.5 font-medium">شراء</span>
+                              <strong className="text-base sm:text-xl font-extrabold text-[#16a34a] tabular-nums" dir="ltr">
+                                {liveRates.rates.SAR.buy.toLocaleString("en-US")}
+                              </strong>
+                            </div>
+                            {/* Sell (Left) */}
+                            <div className="px-1 flex flex-col items-center">
+                              <span className="text-[11px] text-slate-400 mb-0.5 font-medium">بيع</span>
+                              <strong className="text-base sm:text-xl font-extrabold text-[#0f172a] tabular-nums" dir="ltr">
                                 {liveRates.rates.SAR.sell.toLocaleString("en-US")}
-                              </span>
+                              </strong>
                             </div>
-                            <div className="w-[1px] h-4 bg-white/25" />
-                            <div className="flex items-center gap-1.5" dir="rtl">
-                              <span className="text-[#f5ead0]/90">دولار</span>
-                              <span className="text-white font-extrabold tabular-nums" dir="ltr">
-                                {liveRates.rates.USD.sell.toLocaleString("en-US")}
-                              </span>
-                            </div>
-                          </>
+                          </div>
                         )}
+                        <span className="text-[11px] text-slate-400 text-center mt-2.5 block font-medium">ريال يمني</span>
                       </div>
 
-                      <div className="text-[#c7942c] shrink-0">
-                        <ChevronLeft className="w-5 h-5" />
+                      {/* US Dollar Card (Left) */}
+                      <div
+                        onClick={() => route("/visitor/exchange-rates")}
+                        className="bg-white rounded-2xl p-3.5 sm:p-4 border border-[#e2e8f0] shadow-xs cursor-pointer hover:border-[#064b3d]/40 transition-all flex flex-col justify-between"
+                      >
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-100">
+                          <span className="font-extrabold text-xs sm:text-sm text-[#064B3D]" style={{ color: "#064b3d" }}>
+                            الدولار الأمريكي 🇺🇸
+                          </span>
+                        </div>
+
+                        {ratesLoading ? (
+                          <div className="text-center py-4 text-xs text-slate-500">جارِ التحميل...</div>
+                        ) : !isApprovedRates || !liveRates ? (
+                          <div className="text-center py-4 text-xs text-amber-700 font-bold">السعر غير متوفر</div>
+                        ) : (
+                          <div className="grid grid-cols-2 text-center divide-x divide-x-reverse divide-slate-100 items-center">
+                            {/* Buy (Right) */}
+                            <div className="px-1 flex flex-col items-center">
+                              <span className="text-[11px] text-slate-400 mb-0.5 font-medium">شراء</span>
+                              <strong className="text-base sm:text-xl font-extrabold text-[#16a34a] tabular-nums" dir="ltr">
+                                {liveRates.rates.USD.buy.toLocaleString("en-US")}
+                              </strong>
+                            </div>
+                            {/* Sell (Left) */}
+                            <div className="px-1 flex flex-col items-center">
+                              <span className="text-[11px] text-slate-400 mb-0.5 font-medium">بيع</span>
+                              <strong className="text-base sm:text-xl font-extrabold text-[#0f172a] tabular-nums" dir="ltr">
+                                {liveRates.rates.USD.sell.toLocaleString("en-US")}
+                              </strong>
+                            </div>
+                          </div>
+                        )}
+                        <span className="text-[11px] text-slate-400 text-center mt-2.5 block font-medium">ريال يمني</span>
                       </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 text-center mt-2 flex items-center justify-center gap-2">
+                      <span>آخر تحديث: {hydrated && isApprovedRates && liveRates?.updatedAt ? formatRateTimestamp(liveRates.updatedAt, "short") : "لم يتم التحديث"}</span>
+                      <span>·</span>
+                      <span>{isApprovedRates && liveRates?.source ? liveRates.source : "سوق عدن المالي"}</span>
                     </div>
                   </section>
                   <section className="home-section" key="quickActivities">
@@ -2124,8 +2185,8 @@ function VisitorHome() {
               return null;
           }
         })}
-    </main>
-  </div>;
+      </main>
+    </div>;
 }
 
 const yafaDistricts = ["لبعوس", "رصد", "الحد", "يهر", "المفلحي", "سرار", "سباح"];
@@ -2476,6 +2537,27 @@ function VisitorCategory({ type }: { type: string }) {
     toastMessage(exists ? "أزيل المنتج من المفضلة" : "أضيف إلى المفضلة");
   };
 
+  const matchingStores = useMemo(() => {
+    const allCloud = cloudStores.map((s) => ({
+      id: s.id,
+      name: s.name || "منشأة يافع",
+      district: s.district || "لبعوس",
+      activity: s.category || s.mainCategory || copy.title,
+      image: s.coverImage || s.logoUrl || s.logo || defaultStoreCover,
+      phone: s.phone && s.phone !== "770000000" ? s.phone : "",
+      category: s.category || "",
+      mainCategory: s.mainCategory || "",
+    }));
+
+    const filtered = type === "stores" ? allCloud : allCloud.filter((s) => {
+      const cat = String(s.activity || s.category || s.mainCategory).toLowerCase();
+      const tTitle = copy.title.toLowerCase();
+      return cat.includes(tTitle) || tTitle.includes(cat) || cat.includes(type) || (activityId && cat.includes(activityId));
+    });
+
+    return selectedDistrict === "الكل" ? filtered : filtered.filter((s) => s.district === selectedDistrict);
+  }, [cloudStores, selectedDistrict, type, copy.title, activityId, defaultStoreCover]);
+
   const baseItems = useMemo(() => {
     const sampleImages = [
       resolveSlotPrimaryImage(appImages, "product_sample_1", market),
@@ -2514,22 +2596,8 @@ function VisitorCategory({ type }: { type: string }) {
     return filtered;
   }, [type, image, selectedDistrict, sortOrder, cloudProducts, appImages, defaultProductImg]);
 
-  const matchingStores = useMemo(() => {
-    const allStores = [
-      ...cloudStores.map((s) => ({
-        id: s.id,
-        name: s.name || "منشأة يافع",
-        district: s.district || "لبعوس",
-        activity: s.category || "متجر تجاري",
-        image: s.coverImage || s.logoUrl || s.logo || defaultStoreCover,
-        phone: s.phone && s.phone !== "770000000" ? s.phone : "",
-      })),
-      ...homePreviewStores,
-    ];
-    return selectedDistrict === "الكل" ? allStores : allStores.filter((s) => s.district === selectedDistrict);
-  }, [cloudStores, selectedDistrict, defaultStoreCover]);
-
   return <VisitorShell>
+    <ScenicHero title={copy.title} subtitle={copy.subtitle} image={resolvedCategoryBanner} activity />
     <SearchBar />
     <div className="filter-row">
       <Button kind="outline" onClick={() => setFilterOpen(true)}><MapPin /> {selectedDistrict === "الكل" ? "كل مديريات يافع" : selectedDistrict}</Button>
@@ -2542,11 +2610,25 @@ function VisitorCategory({ type }: { type: string }) {
         ))}
       </div>
     </Modal>}
-    <section><SectionTitle title={`نتائج ${copy.title}`} />{baseItems.length ? <div className="product-grid">{baseItems.map((product) => {
-      const isFav = favProdIds.includes(String(product.id));
-      return <article className="product-card" key={String(product.id)}><button className={`favorite ${isFav ? "selected" : ""}`} aria-label="المفضلة" onClick={() => toggleFavoriteProd(product.id)}><Heart style={{ fill: isFav ? "#dc2626" : "none", color: isFav ? "#dc2626" : undefined }} /></button><img src={product.image} alt={product.name} onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = defaultProductImg; }} /><h3>{product.name}</h3><strong>{product.price}</strong><Button kind="gold" onClick={() => route(`/visitor/product/${product.id}`)}>عرض التفاصيل</Button></article>;
-    })}</div> : <Empty title="لا توجد نتائج في هذه المديرية" action={() => setSelectedDistrict("الكل")} />}</section>
-    <section><SectionTitle title="متاجر موصى بها" /><div className="store-grid">{matchingStores.slice(0, 4).map((st, idx) => <StoreCard key={String(st.id)} alt={idx % 2 === 1} store={st} />)}</div></section>
+    <section>
+      <SectionTitle title={`المنشآت والشركات التابعة لـ ${copy.title}`} />
+      {matchingStores.length ? (
+        <div className="store-grid">{matchingStores.map((st, idx) => <StoreCard key={String(st.id)} alt={idx % 2 === 1} store={st} />)}</div>
+      ) : (
+        <Empty title="لا توجد منشآت مضافة حاليًا" action={() => route("/visitor/home")} />
+      )}
+    </section>
+    <section>
+      <SectionTitle title={`منتجات وخدمات ${copy.title}`} />
+      {baseItems.length ? (
+        <div className="product-grid">{baseItems.map((product) => {
+          const isFav = favProdIds.includes(String(product.id));
+          return <article className="product-card" key={String(product.id)}><button className={`favorite ${isFav ? "selected" : ""}`} aria-label="المفضلة" onClick={() => toggleFavoriteProd(product.id)}><Heart style={{ fill: isFav ? "#dc2626" : "none", color: isFav ? "#dc2626" : undefined }} /></button><img src={product.image} alt={product.name} onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = defaultProductImg; }} /><h3>{product.name}</h3><strong>{product.price}</strong><Button kind="gold" onClick={() => route(`/visitor/product/${product.id}`)}>عرض التفاصيل</Button></article>;
+        })}</div>
+      ) : (
+        <Empty title="لا توجد منتجات مضافة لهذا النشاط حاليًا" action={() => setSelectedDistrict("الكل")} />
+      )}
+    </section>
   </VisitorShell>;
 }
 

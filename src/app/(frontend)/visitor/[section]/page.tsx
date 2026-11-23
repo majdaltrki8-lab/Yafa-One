@@ -25,6 +25,7 @@ const validVisitorSections = new Set([
   'services',
   'vehicles',
   'dealers',
+  'cars',
   'property',
   'health',
   'pharmacies',

@@ -1419,14 +1419,23 @@ function VisitorLoginPrompt({ setRole }: { setRole: (role: Role) => void }) {
       const userName = json.user?.name || name.trim() || userPhone;
 
       if (fbUser) {
-        await setDoc(doc(db, "users", fbUser.uid), {
-          uid: fbUser.uid,
-          name: userName,
-          phoneNumber: userPhone,
-          role: "customer",
-          status: "active",
-          createdAt: new Date().toISOString(),
-        }, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${fbUser.uid}`));
+        const userRef = doc(db, "users", fbUser.uid);
+        const userSnap = await getDoc(userRef).catch(() => null);
+        if (!userSnap || !userSnap.exists()) {
+          await setDoc(userRef, {
+            uid: fbUser.uid,
+            name: userName,
+            phoneNumber: userPhone,
+            role: "customer",
+            status: "active",
+            createdAt: new Date().toISOString(),
+          }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${fbUser.uid}`));
+        } else {
+          await setDoc(userRef, {
+            name: userName,
+            phoneNumber: userPhone,
+          }, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${fbUser.uid}`));
+        }
       }
 
       safeStorage.removeItem("yafa-role");
@@ -5035,9 +5044,6 @@ function ProductForm({ setRole }: { setRole: (r: Role) => void }) {
 
       if (auth.currentUser && targetEstId !== "est-local") {
         const docPayload: Record<string, any> = {
-          id: String(prodId),
-          establishmentId: targetEstId,
-          ownerId: auth.currentUser.uid,
           name: product.name,
           mainCategory: product.mainCategory,
           subCategory: product.subCategory,
@@ -5053,6 +5059,9 @@ function ProductForm({ setRole }: { setRole: (r: Role) => void }) {
           updatedAt: new Date().toISOString(),
         };
         if (!editingId) {
+          docPayload.id = String(prodId);
+          docPayload.establishmentId = targetEstId;
+          docPayload.ownerId = auth.currentUser.uid;
           docPayload.approved = false;
           docPayload.createdAt = new Date().toISOString();
         }
@@ -5807,14 +5816,23 @@ function SignupFlow({ setRole }: { setRole: (r: Role) => void }) {
       const uid = fbUser?.uid || "";
 
       if (uid) {
-        await setDoc(doc(db, "users", uid), {
-          uid,
-          name: oName,
-          phoneNumber: normalizedPhone,
-          role: "owner",
-          status: "active",
-          createdAt: new Date().toISOString(),
-        }, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${uid}`));
+        const userRef = doc(db, "users", uid);
+        const userSnap = await getDoc(userRef).catch(() => null);
+        if (!userSnap || !userSnap.exists()) {
+          await setDoc(userRef, {
+            uid,
+            name: oName,
+            phoneNumber: normalizedPhone,
+            role: "owner",
+            status: "active",
+            createdAt: new Date().toISOString(),
+          }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${uid}`));
+        } else {
+          await setDoc(userRef, {
+            name: oName,
+            phoneNumber: normalizedPhone,
+          }, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `users/${uid}`));
+        }
       }
 
       const estId = regJson.user?.establishmentId || `EST-${Date.now().toString().slice(-5)}`;

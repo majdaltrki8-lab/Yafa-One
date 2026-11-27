@@ -1,6 +1,8 @@
 'use client'
 
 export const dynamic = 'force-dynamic'
+export const dynamicParams = true
+export const revalidate = 0
 
 export default function GlobalError({
   error,
@@ -12,9 +14,23 @@ export default function GlobalError({
   return (
     <html lang="ar" dir="rtl">
       <body>
-        <div style={{ padding: 40, textAlign: 'center', fontFamily: 'sans-serif' }}>
-          <h2>حدث خطأ غير متوقع</h2>
-          <button onClick={() => reset()} style={{ padding: '10px 20px', marginTop: 15, background: '#064b3d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+        <div style={{ padding: '50px', textAlign: 'center', fontFamily: 'system-ui, sans-serif', direction: 'rtl' }}>
+          <h2 style={{ color: '#064b3d', fontSize: '24px', marginBottom: '16px' }}>حدث خطأ في النظام</h2>
+          <p style={{ color: '#555', marginBottom: '24px' }}>عذراً، حدث خطأ غير متوقع. يرجى إعادة المحاولة.</p>
+          <button
+            type="button"
+            onClick={() => reset()}
+            style={{
+              background: '#064b3d',
+              color: '#fff',
+              border: 'none',
+              padding: '12px 24px',
+              borderRadius: '10px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '14px',
+            }}
+          >
             إعادة المحاولة
           </button>
         </div>

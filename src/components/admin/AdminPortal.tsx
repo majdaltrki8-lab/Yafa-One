@@ -41,7 +41,7 @@ const pageInfo: Record<string, { title: string; subtitle: string; collection?: s
   ads: { title: 'إدارة الإعلانات', subtitle: 'الإعلانات المدفوعة وإعلانات 24 ساعة وتثبيت المتاجر', collection: 'advertisements', add: 'إضافة إعلان' },
   promotions: { title: 'إدارة العروض والبونصات', subtitle: 'العروض والمكافآت والكوبونات وبرنامج شارك واربح', collection: 'promotions', add: 'إضافة عرض' },
   reports: { title: 'التقارير والإحصائيات', subtitle: 'تقارير قابلة للتصفية والتصدير دون أرقام تجريبية' },
-  payments: { title: 'إدارة العمولات والمدفوعات', subtitle: 'عمولة 3% للطلبات المكتملة فقط وإيصالات التحصيل', collection: 'payments', add: 'إضافة إيصال' },
+  payments: { title: 'إدارة المدفوعات والعمولة', subtitle: 'عمولة المنصة 0 ريال (0%) لجميع الطلبات وإيصالات الدفع', collection: 'payments', add: 'إضافة إيصال' },
   notifications: { title: 'إدارة الإشعارات', subtitle: 'إنشاء الإشعارات وجدولتها ومراجعة سجل الإرسال', collection: 'notifications', add: 'إنشاء إشعار' },
   settings: { title: 'إعدادات النظام', subtitle: 'العملات وأسعار الصرف والمحتوى والإعدادات العامة' },
   appearance: { title: 'إدارة المظهر والمحتوى والتصميم', subtitle: 'تخصيص الألوان والشعارات والبنرات وإظهار وترتيب أقسام التطبيق حياً دون تحديث التطبيق' },
@@ -281,7 +281,7 @@ export default function AdminPortal({ snapshot }: { snapshot: AdminSnapshot }) {
           )}
 
           <div className="admin-security-note"><ShieldCheck /><div><b>الحماية والصلاحيات</b><p>جميع عمليات الإدارة الفعلية تمر عبر جلسة Payload والخادم. الإجراءات الحساسة تستفيد من تأكيد لوحة Payload وتُسجل في سجل التدقيق.</p></div></div>
-          {snapshot.section === 'settings' && <div className="admin-warning"><ShieldCheck /><p>النسخ الاحتياطي والاستعادة الكاملة لقاعدة Figma Cloud غير مكشوفين كواجهة تطبيق حاليًا؛ لم نعرض زر استعادة وهميًا أو غير آمن.</p></div>}
+          {snapshot.section === 'settings' && <div className="admin-warning"><ShieldCheck /><p>النسخ الاحتياطي الكامل لقاعدة البيانات يُدار على مستوى الخادم السحابي لضمان الأمان وعدم تعريض الملفات للعميل.</p></div>}
           {snapshot.section === 'notifications' && <div className="admin-warning"><Bell /><p>يمكن إنشاء الإشعارات وجدولتها وحفظ سجلها. الإرسال الفعلي يحتاج موفر Push أو بريد وربطًا سريًا منفصلًا.</p></div>}
         </div>
       </section>

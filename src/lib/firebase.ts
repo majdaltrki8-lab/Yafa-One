@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app'
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth'
+import { getAuth, browserLocalPersistence, setPersistence, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth'
 import { getFirestore, initializeFirestore, doc, getDocFromServer, collection, getDocs, setDoc, updateDoc } from 'firebase/firestore'
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import firebaseConfig from '../../firebase-applet-config.json'
@@ -19,6 +19,9 @@ export const db = (() => {
   }
 })()
 export const auth = getAuth(app)
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch(() => {})
+}
 export const storage = getStorage(app)
 
 export { firebaseConfig }

@@ -23,8 +23,10 @@ import {
   getLocalAppearance,
   setLocalAppearance,
   type AppAppearance,
-  type HomeSection,
 } from '@/lib/appearance'
+import { db } from '@/lib/firebase'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { verifyFirebaseAdminAuthority, recordAdminAuditFirestore } from '@/lib/appImages'
 
 export default function AppearanceManager() {
   const [appearance, setAppearance] = useState<AppAppearance>(defaultAppearance)
@@ -32,6 +34,7 @@ export default function AppearanceManager() {
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [confirmReset, setConfirmReset] = useState(false)
 
   // Load from local storage and backend on mount
   useEffect(() => {
@@ -52,8 +55,20 @@ export default function AppearanceManager() {
         }
       })
       .catch(() => {
-        // fallback to local
+        // fallback to Firestore or local
       })
+
+    getDoc(doc(db, 'settings', 'appearance'))
+      .then((snap) => {
+        if (snap.exists()) {
+          const fbApp = snap.data() as AppAppearance
+          if (fbApp && fbApp.colors) {
+            setAppearance(fbApp)
+            setLocalAppearance(fbApp)
+          }
+        }
+      })
+      .catch(() => {})
   }, [])
 
   const handleColorChange = (key: keyof typeof appearance.colors, value: string) => {
@@ -122,32 +137,56 @@ export default function AppearanceManager() {
     })
   }
 
-  const resetToDefault = async () => {
-    if (confirm('هل أنت متأكد من استعادة التصميم الافتراضي المعتمد لمنصة يافع ون؟')) {
-      try {
-        setSaving(true)
-        setAppearance(defaultAppearance)
-        setLocalAppearance(defaultAppearance)
-        const res = await fetch('/api/appearance', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-requested-with': 'XMLHttpRequest',
-          },
-          credentials: 'include',
-          body: JSON.stringify({ reset: true }),
-        })
-        const ct = res.headers.get('content-type')
-        const data = ct && ct.includes('application/json') ? await res.json() : null
-        if (data?.success) {
-          setSaveSuccess(true)
-          setTimeout(() => setSaveSuccess(false), 3000)
-        }
-      } catch (err: any) {
-        setErrorMsg(err.message || 'فشلت استعادة الإعدادات')
-      } finally {
-        setSaving(false)
+  const executeResetToDefault = async () => {
+    setConfirmReset(false)
+    setErrorMsg('')
+    try {
+      setSaving(true)
+      const resetDoc: AppAppearance = {
+        ...defaultAppearance,
+        version: (appearance.version || 1) + 1,
+        updatedAt: new Date().toISOString(),
       }
+      setAppearance(resetDoc)
+      setLocalAppearance(resetDoc)
+
+      const fbAuth = await verifyFirebaseAdminAuthority()
+      let cloudSynced = false
+      if (fbAuth.isAdmin) {
+        try {
+          await setDoc(doc(db, 'settings', 'appearance'), resetDoc, { merge: true })
+          cloudSynced = true
+        } catch {
+          // continue to API sync
+        }
+      }
+
+      const res = await fetch('/api/appearance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-requested-with': 'XMLHttpRequest',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ reset: true }),
+      })
+      const ct = res.headers.get('content-type')
+      const data = ct && ct.includes('application/json') ? await res.json() : null
+      if ((res.ok && data?.success) || cloudSynced) {
+        await recordAdminAuditFirestore({
+          action: 'استعادة المظهر الافتراضي',
+          section: 'إدارة المظهر والمحتوى',
+          target: 'settings/appearance',
+        })
+        setSaveSuccess(true)
+        setTimeout(() => setSaveSuccess(false), 3000)
+      } else {
+        throw new Error(data?.error || 'فشلت استعادة الإعدادات على الخادم')
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشلت استعادة الإعدادات')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -157,10 +196,28 @@ export default function AppearanceManager() {
     setSaveSuccess(false)
 
     try {
-      // 1. Save to local storage and update DOM directly
-      setLocalAppearance(appearance)
+      const nextPayload: AppAppearance = {
+        ...appearance,
+        version: (appearance.version || 1) + 1,
+        updatedAt: new Date().toISOString(),
+      }
 
-      // 2. Persist to API with admin credentials
+      // 1. Save to local storage and update DOM directly
+      setLocalAppearance(nextPayload)
+
+      // 2. Persist directly to Firestore with verified Firebase Admin session for live Web + APK sync
+      const fbAuth = await verifyFirebaseAdminAuthority()
+      let firestoreSynced = false
+      if (fbAuth.isAdmin) {
+        try {
+          await setDoc(doc(db, 'settings', 'appearance'), nextPayload, { merge: true })
+          firestoreSynced = true
+        } catch {
+          // fall back to API check below
+        }
+      }
+
+      // 3. Persist to API with admin credentials
       const res = await fetch('/api/appearance', {
         method: 'POST',
         headers: {
@@ -168,17 +225,21 @@ export default function AppearanceManager() {
           'x-requested-with': 'XMLHttpRequest',
         },
         credentials: 'include',
-        body: JSON.stringify(appearance),
+        body: JSON.stringify(nextPayload),
       })
 
       const ct = res.headers.get('content-type')
       const data = ct && ct.includes('application/json') ? await res.json() : null
-      if (res.ok && data?.success) {
+      if ((res.ok && data?.success) || firestoreSynced) {
+        await recordAdminAuditFirestore({
+          action: 'تحديث المظهر والمحتوى',
+          section: 'إدارة المظهر والمحتوى',
+          target: `الإصدار ${nextPayload.version}`,
+        })
         setSaveSuccess(true)
-        if (data.appearance) {
-          setAppearance(data.appearance)
-          setLocalAppearance(data.appearance)
-        }
+        const finalAppearance = data?.appearance || nextPayload
+        setAppearance(finalAppearance)
+        setLocalAppearance(finalAppearance)
         setTimeout(() => setSaveSuccess(false), 4000)
       } else {
         throw new Error(data?.error || 'فشل الحفظ على الخادم: غير مصرح')
@@ -220,10 +281,11 @@ export default function AppearanceManager() {
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
             type="button"
-            onClick={resetToDefault}
+            onClick={() => setConfirmReset(true)}
+            disabled={saving}
             className="btn btn-outline"
             style={{
               background: 'rgba(255,255,255,0.15)',
@@ -257,6 +319,60 @@ export default function AppearanceManager() {
           </button>
         </div>
       </div>
+
+      {confirmReset && (
+        <div
+          style={{
+            padding: '14px 16px',
+            borderRadius: '12px',
+            background: '#fffbeb',
+            border: '1px solid #f59e0b',
+            color: '#92400e',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '10px',
+          }}
+        >
+          <strong style={{ fontSize: '13px' }}>هل أنت متأكد من استعادة التصميم الافتراضي المعتمد لمنصة يافع ون؟</strong>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={executeResetToDefault}
+              disabled={saving}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '8px',
+                border: 0,
+                background: '#b45309',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              نعم، استعادة الافتراضي
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmReset(false)}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                background: 'white',
+                color: '#334155',
+                fontWeight: 700,
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              إلغاء
+            </button>
+          </div>
+        </div>
+      )}
 
       {saveSuccess && (
         <div

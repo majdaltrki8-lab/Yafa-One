@@ -28,12 +28,6 @@ export default function NotFound() {
         >
           <Store className="h-4 w-4" /> بوابة صاحب المنشأة
         </Link>
-        <Link
-          href="/auth/admin-login"
-          className="flex h-11 items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-5 text-sm font-bold text-zinc-700 transition hover:bg-zinc-50"
-        >
-          <ShieldCheck className="h-4 w-4" /> بوابة الإدارة العامة
-        </Link>
       </div>
     </main>
   )

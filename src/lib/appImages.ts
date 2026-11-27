@@ -684,15 +684,24 @@ export async function compressImageFileToBlob(
 }
 
 /**
- * Verify Firebase Auth user has actual Admin permission (verified email OR admins/{uid} document)
+ * Verify Firebase Auth user has actual Admin permission (Custom Claim admin==true, verified admin email, OR admins/{uid} document)
  */
-export async function verifyFirebaseAdminAuthority(): Promise<{
+export async function verifyFirebaseAdminAuthority(forceRefresh = false): Promise<{
   isAdmin: boolean
+  hasCustomClaim?: boolean
   uid: string | null
   email: string | null
   emailVerified: boolean
   reason?: string
 }> {
+  if (typeof auth.authStateReady === 'function') {
+    try {
+      await auth.authStateReady()
+    } catch {
+      // ignore if unavailable
+    }
+  }
+
   const user = auth.currentUser
   if (!user) {
     return {
@@ -707,14 +716,23 @@ export async function verifyFirebaseAdminAuthority(): Promise<{
   const email = (user.email || '').toLowerCase()
   const emailVerified = Boolean(user.emailVerified)
 
-  if (email === 'majdaltrki8@gmail.com' && emailVerified) {
-    return { isAdmin: true, uid: user.uid, email, emailVerified }
+  try {
+    const tokenResult = await user.getIdTokenResult(forceRefresh)
+    if (tokenResult?.claims?.admin === true) {
+      return { isAdmin: true, hasCustomClaim: true, uid: user.uid, email, emailVerified }
+    }
+  } catch {
+    // proceed to verified email and Firestore RBAC checks
+  }
+
+  if (AUTHORIZED_ADMIN_EMAILS.has(email) && emailVerified) {
+    return { isAdmin: true, hasCustomClaim: false, uid: user.uid, email, emailVerified }
   }
 
   try {
     const adminSnap = await getDoc(doc(db, 'admins', user.uid))
     if (adminSnap.exists()) {
-      return { isAdmin: true, uid: user.uid, email, emailVerified }
+      return { isAdmin: true, hasCustomClaim: false, uid: user.uid, email, emailVerified }
     }
   } catch {
     // ignore read error and evaluate remaining checks
@@ -736,6 +754,32 @@ export async function verifyFirebaseAdminAuthority(): Promise<{
     email,
     emailVerified,
     reason: 'غير مصرح: هذا الحساب لا يملك صلاحية مدير النظام في Firebase.',
+  }
+}
+
+/**
+ * Ensure verified admin has a Firestore RBAC document under admins/{uid}
+ */
+export async function syncAdminFirestoreIdentity(): Promise<void> {
+  const user = auth.currentUser
+  if (!user) return
+  const check = await verifyFirebaseAdminAuthority()
+  if (!check.isAdmin) return
+  try {
+    await setDoc(
+      doc(db, 'admins', user.uid),
+      {
+        uid: user.uid,
+        email: (user.email || '').toLowerCase(),
+        role: 'super_admin',
+        name: user.displayName || 'المدير العام ماجد التركي',
+        customClaimAdmin: Boolean(check.hasCustomClaim),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true },
+    )
+  } catch {
+    // Non-fatal if rules require custom claim first
   }
 }
 

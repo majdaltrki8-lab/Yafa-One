@@ -20,6 +20,7 @@ import {
   recordAdminAuditFirestore,
   useHomeActivities,
   verifyFirebaseAdminAuthority,
+  syncAdminFirestoreIdentity,
 } from "@/lib/appImages";
 import {
   signInWithEmailAndPassword,
@@ -29,6 +30,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
 } from "firebase/auth";
 import {
   collection,
@@ -45,6 +48,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   getLocalAppearance,
+  setLocalAppearance,
   applyAppearanceToDOM,
   APPEARANCE_EVENT_NAME,
   type AppAppearance,
@@ -88,7 +92,27 @@ function useAppAppearance() {
         clearTimeout(timeout);
       });
 
-    return () => window.removeEventListener(APPEARANCE_EVENT_NAME, onUpdate);
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = onSnapshot(
+        doc(db, "settings", "appearance"),
+        (snap) => {
+          if (snap.exists()) {
+            const fbApp = snap.data() as AppAppearance;
+            if (fbApp && fbApp.colors) {
+              setAppearance(fbApp);
+              setLocalAppearance(fbApp);
+            }
+          }
+        },
+        () => {},
+      );
+    } catch {}
+
+    return () => {
+      window.removeEventListener(APPEARANCE_EVENT_NAME, onUpdate);
+      if (unsubFirestore) unsubFirestore();
+    };
   }, []);
 
   return appearance;
@@ -367,18 +391,24 @@ function usePublishedAds() {
     const update = () => setAds(loadPublishedAds());
     window.addEventListener("yafa-carousel-published", update);
     window.addEventListener("storage", update);
-    getDoc(doc(db, "settings", "carousel"))
-      .then((snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.items) && snap.data().items.length) {
-          const items = snap.data().items as CarouselAd[];
-          setAds(items);
-          safeStorage.setItem(carouselStorageKey, JSON.stringify(items));
-        }
-      })
-      .catch(() => {});
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        doc(db, "settings", "carousel"),
+        (snap) => {
+          if (snap.exists() && Array.isArray(snap.data()?.items) && snap.data().items.length) {
+            const items = snap.data().items as CarouselAd[];
+            setAds(items);
+            safeStorage.setItem(carouselStorageKey, JSON.stringify(items));
+          }
+        },
+        () => {},
+      );
+    } catch {}
     return () => {
       window.removeEventListener("yafa-carousel-published", update);
       window.removeEventListener("storage", update);
+      if (unsub) unsub();
     };
   }, []);
   return ads;
@@ -396,17 +426,24 @@ function useActivityImages() {
     const update = () => setImages(loadActivityImages());
     window.addEventListener("yafa-activity-images", update);
     window.addEventListener("storage", update);
-    getDoc(doc(db, "settings", "activityImages"))
-      .then((snap) => {
-        if (snap.exists() && snap.data()?.cards) {
-          const cards = snap.data().cards as Record<string, string>;
-          setImages((prev) => ({ ...prev, ...cards }));
-        }
-      })
-      .catch(() => {});
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        doc(db, "settings", "activityImages"),
+        (snap) => {
+          if (snap.exists() && snap.data()?.cards) {
+            const cards = snap.data().cards as Record<string, string>;
+            setImages((prev) => ({ ...prev, ...cards }));
+            safeStorage.setItem(activityImageStorageKey, JSON.stringify(cards));
+          }
+        },
+        () => {},
+      );
+    } catch {}
     return () => {
       window.removeEventListener("yafa-activity-images", update);
       window.removeEventListener("storage", update);
+      if (unsub) unsub();
     };
   }, []);
   return images;
@@ -424,17 +461,24 @@ function useActivityBanners() {
     const update = () => setImages(loadActivityBanners());
     window.addEventListener("yafa-activity-banners", update);
     window.addEventListener("storage", update);
-    getDoc(doc(db, "settings", "activityImages"))
-      .then((snap) => {
-        if (snap.exists() && snap.data()?.banners) {
-          const banners = snap.data().banners as Record<string, string>;
-          setImages((prev) => ({ ...prev, ...banners }));
-        }
-      })
-      .catch(() => {});
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        doc(db, "settings", "activityImages"),
+        (snap) => {
+          if (snap.exists() && snap.data()?.banners) {
+            const banners = snap.data().banners as Record<string, string>;
+            setImages((prev) => ({ ...prev, ...banners }));
+            safeStorage.setItem(activityBannerStorageKey, JSON.stringify(banners));
+          }
+        },
+        () => {},
+      );
+    } catch {}
     return () => {
       window.removeEventListener("yafa-activity-banners", update);
       window.removeEventListener("storage", update);
+      if (unsub) unsub();
     };
   }, []);
   return images;
@@ -884,14 +928,27 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
   const [infoMsg, setInfoMsg] = useState("");
   const [returnUrl, setReturnUrl] = useState<string | null>(null);
   const [activeOwnerPhone, setActiveOwnerPhone] = useState("");
+  const [activeAdminEmail, setActiveAdminEmail] = useState("");
+  const [rememberAdmin, setRememberAdmin] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     if (typeof window !== "undefined") {
       setReturnUrl(new URLSearchParams(window.location.search).get("return"));
       if (kind === "owner" && safeStorage.getItem("yafa-role") === "owner") {
         setActiveOwnerPhone(safeStorage.getItem("yafa-owner-phone") || "حساب صاحب المنشأة");
       }
+      if (kind === "admin") {
+        verifyFirebaseAdminAuthority().then((res) => {
+          if (!cancelled && res.isAdmin && res.email) {
+            setActiveAdminEmail(res.email);
+          }
+        }).catch(() => {});
+      }
     }
+    return () => {
+      cancelled = true;
+    };
   }, [kind]);
 
   const completeAdminLogin = async (verifiedEmail: string, firebaseIdToken: string) => {
@@ -911,6 +968,7 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
       throw new Error(json?.error || "فشل التحقق من صلاحية الإدارة على الخادم.");
     }
 
+    await syncAdminFirestoreIdentity();
     setRole("admin");
     safeStorage.setItem("yafa-role", "admin");
     safeStorage.setItem("yafa-user-email", verifiedEmail);
@@ -919,23 +977,34 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
     }
     recordAdminAudit("تسجيل دخول إداري", "المصادقة والأمان", `دخول المدير العام: ${verifiedEmail}`);
     toastMessage("مرحباً بالمدير العام: تم تسجيل الدخول بنجاح");
-    const destination = returnUrl && returnUrl.startsWith("/admin/") ? returnUrl : "/admin/dashboard";
+    const destination =
+      returnUrl && (returnUrl.startsWith("/admin/") || returnUrl.startsWith("/management/"))
+        ? returnUrl
+        : "/admin/dashboard";
     route(destination);
   };
 
   const submitAdmin = async (e: FormEvent) => {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
-    if (cleanEmail !== "majdaltrki8@gmail.com" || password.length < 6) {
-      return setError("البريد الإلكتروني غير مخول للإدارة أو كلمة المرور غير صالحة.");
+    if (!cleanEmail.includes("@") || password.length < 6) {
+      return setError("أدخل البريد الإداري المعتمد وكلمة المرور الصحيحة.");
     }
     setError("");
     setInfoMsg("");
     setLoading(true);
     try {
+      if (rememberAdmin) {
+        await setPersistence(auth, browserLocalPersistence).catch(() => {});
+      }
       const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
-      const firebaseIdToken = await cred.user.getIdToken();
-      await completeAdminLogin(cleanEmail, firebaseIdToken);
+      const firebaseIdToken = await cred.user.getIdToken(true);
+      const authority = await verifyFirebaseAdminAuthority(true);
+      if (!authority.isAdmin) {
+        await signOut(auth).catch(() => {});
+        throw new Error(authority.reason || "هذا الحساب غير مصرح له بالدخول كمدير نظام.");
+      }
+      await completeAdminLogin(authority.email || cleanEmail, firebaseIdToken);
     } catch (err: any) {
       setError(getArabicAuthError(err));
     } finally {
@@ -948,15 +1017,18 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
     setInfoMsg("");
     setLoading(true);
     try {
+      if (rememberAdmin) {
+        await setPersistence(auth, browserLocalPersistence).catch(() => {});
+      }
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
-      const gEmail = (result.user.email || "").toLowerCase();
-      if (gEmail !== "majdaltrki8@gmail.com" || !result.user.emailVerified) {
+      const token = await result.user.getIdToken(true);
+      const authority = await verifyFirebaseAdminAuthority(true);
+      if (!authority.isAdmin) {
         await signOut(auth).catch(() => {});
-        throw new Error("هذا الحساب غير مصرح له بالدخول كمدير نظام.");
+        throw new Error(authority.reason || "هذا الحساب غير مصرح له بالدخول كمدير نظام.");
       }
-      const token = await result.user.getIdToken();
-      await completeAdminLogin(gEmail, token);
+      await completeAdminLogin(authority.email || (result.user.email || "").toLowerCase(), token);
     } catch (err: any) {
       setError(getArabicAuthError(err));
     } finally {
@@ -966,7 +1038,7 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
 
   const handleAdminPasswordReset = async () => {
     const cleanEmail = email.trim().toLowerCase();
-    if (cleanEmail !== "majdaltrki8@gmail.com") {
+    if (!cleanEmail || !cleanEmail.includes("@")) {
       return setError("أدخل البريد الإداري المعتمد أولاً لاستعادة كلمة المرور.");
     }
     setError("");
@@ -1120,6 +1192,57 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
   const authBanner = resolveSlotPrimaryImage(appImages, "auth_login_banner", "");
 
   if (kind === "admin") {
+    const handleAdminLogoutFromGate = async () => {
+      await clearServerAndFirebaseSession();
+      safeStorage.removeItem("yafa-role");
+      setRole(null);
+      setActiveAdminEmail("");
+      toastMessage("تم تسجيل الخروج من جلسة الإدارة");
+    };
+
+    if (activeAdminEmail) {
+      return <main className="auth-page">
+        <TopBar back="/" />
+        <div className="auth-shell">
+          <Brand />
+          <span className="eyebrow">بوابة الإدارة العليا</span>
+          <h1>جلسة المدير العام نشطة</h1>
+          <div className="alert success"><Check /><span>الحساب الموثق: <b dir="ltr">{activeAdminEmail}</b></span></div>
+          <div style={{ display: "grid", gap: "10px" }}>
+            <Button
+              type="button"
+              kind="gold"
+              onClick={async () => {
+                if (auth.currentUser) {
+                  const idToken = await auth.currentUser.getIdToken(true).catch(() => "");
+                  if (idToken) {
+                    await fetch("/api/session", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
+                      credentials: "include",
+                      body: JSON.stringify({ role: "admin", email: activeAdminEmail, firebaseIdToken: idToken }),
+                    }).catch(() => {});
+                  }
+                }
+                setRole("admin");
+                safeStorage.setItem("yafa-role", "admin");
+                const destination =
+                  returnUrl && (returnUrl.startsWith("/admin/") || returnUrl.startsWith("/management/"))
+                    ? returnUrl
+                    : "/admin/dashboard";
+                route(destination);
+              }}
+            >
+              <ShieldCheck /> الدخول مباشرة إلى لوحة الإدارة
+            </Button>
+            <Button type="button" kind="outline" onClick={handleAdminLogoutFromGate}>
+              <LogOut /> تسجيل الخروج وتبديل الحساب
+            </Button>
+          </div>
+        </div>
+      </main>;
+    }
+
     return <main className="auth-page">
       <TopBar back="/" />
       <div className="auth-shell">
@@ -1134,14 +1257,14 @@ function Auth({ kind, setRole }: { kind: "owner" | "admin"; setRole: (role: Role
         <Brand />
         <span className="eyebrow">بوابة الإدارة العليا</span>
         <h1>دخول مدير النظام</h1>
-        <p>دخول محصور بالإدارة المعتمدة وموثق بـ Firebase Authentication</p>
+        <p>دخول خاص بالإدارة المعتمدة وموثق بـ Firebase Authentication</p>
         {error && <div className="alert error"><AlertTriangle />{error}</div>}
         {infoMsg && <div className="alert success"><Check />{infoMsg}</div>}
         <form onSubmit={submitAdmin}>
-          <label>البريد الإداري<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="majdaltrki8@gmail.com" required /></label>
-          <label>كلمة المرور<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required /></label>
+          <label>البريد الإداري<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="أدخل البريد الإداري المعتمد" autoComplete="username" required /></label>
+          <label>كلمة المرور<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" required /></label>
           <div className="form-row">
-            <label className="check"><input type="checkbox" defaultChecked /> تذكرني</label>
+            <label className="check"><input type="checkbox" checked={rememberAdmin} onChange={(e) => setRememberAdmin(e.target.checked)} /> حفظ الجلسة بأمان</label>
             <button type="button" className="text-link" disabled={resetLoading} onClick={handleAdminPasswordReset}>
               {resetLoading ? "جارٍ الإرسال..." : "نسيت كلمة المرور؟"}
             </button>
@@ -6309,22 +6432,76 @@ function AdminGeneralPortal({ setRole }: { setRole: (r: Role) => void }) {
   useEffect(() => {
     setCities(loadAdminCities());
     setActiveCityId(safeStorage.getItem("yafa-active-city") || "yafa");
+
+    let unsubCities: (() => void) | null = null;
+    let unsubActive: (() => void) | null = null;
+    try {
+      unsubCities = onSnapshot(
+        collection(db, "cities"),
+        (snap) => {
+          if (!snap.empty) {
+            const cloudCities: CityItem[] = snap.docs.map((d) => {
+              const data = d.data() as any;
+              return {
+                id: d.id,
+                name: String(data.name || d.id),
+                districts: Array.isArray(data.districts) ? data.districts : ["المركز الرئيسي"],
+                active: data.active !== false,
+                localManager: String(data.localManager || "بانتظار التعيين"),
+                storesCount: Number(data.storesCount || 0),
+              };
+            });
+            setCities((prev) => {
+              const map = new Map(prev.map((c) => [c.id, c]));
+              cloudCities.forEach((c) => map.set(c.id, c));
+              const merged = Array.from(map.values());
+              saveAdminCities(merged);
+              return merged;
+            });
+          }
+        },
+        () => {},
+      );
+      unsubActive = onSnapshot(
+        doc(db, "settings", "activeCity"),
+        (snap) => {
+          if (snap.exists() && snap.data()?.cityId) {
+            const cid = String(snap.data().cityId);
+            setActiveCityId(cid);
+            safeStorage.setItem("yafa-active-city", cid);
+          }
+        },
+        () => {},
+      );
+    } catch {}
+
+    return () => {
+      if (unsubCities) unsubCities();
+      if (unsubActive) unsubActive();
+    };
   }, []);
 
   const activeCity = useMemo(() => {
     return cities.find((c) => c.id === activeCityId)?.name || "يافع";
   }, [cities, activeCityId]);
 
-  const switchActiveCity = (cityId: string) => {
+  const switchActiveCity = async (cityId: string) => {
     setActiveCityId(cityId);
     safeStorage.setItem("yafa-active-city", cityId);
     const target = cities.find((c) => c.id === cityId);
+    if (auth.currentUser) {
+      await setDoc(
+        doc(db, "settings", "activeCity"),
+        { cityId, cityName: target?.name || cityId, updatedAt: new Date().toISOString() },
+        { merge: true },
+      ).catch((err) => logFirestoreError(err, OperationType.WRITE, "settings/activeCity"));
+    }
     toastMessage(`تم تغيير المدينة الحالية إلى ${target?.name || cityId}`);
     recordAdminAudit("تغيير المدينة الحالية", "إدارة المدن", `تعيين ${target?.name || cityId} كمدينة تشغيلية`);
     setCityModalOpen(false);
   };
 
-  const handleAddCity = (e: FormEvent) => {
+  const handleAddCity = async (e: FormEvent) => {
     e.preventDefault();
     if (!newCityName.trim()) return toastMessage("يرجى إدخال اسم المدينة");
     const dList = newDistricts.split(/[,،\n]+/).map((s) => s.trim()).filter(Boolean);
@@ -6339,6 +6516,13 @@ function AdminGeneralPortal({ setRole }: { setRole: (r: Role) => void }) {
     const next = [...cities, newCity];
     setCities(next);
     saveAdminCities(next);
+    if (auth.currentUser) {
+      await setDoc(
+        doc(db, "cities", newCity.id),
+        { ...newCity, updatedAt: new Date().toISOString() },
+        { merge: true },
+      ).catch((err) => logFirestoreError(err, OperationType.CREATE, `cities/${newCity.id}`));
+    }
     recordAdminAudit("إضافة مدينة جديدة", "إدارة المدن", `إضافة مدينة ${newCity.name} مع ${newCity.districts.length} مديرية`);
     toastMessage(`تمت إضافة مدينة ${newCity.name} بنجاح إلى نظام المناطق`);
     setNewCityName("");
@@ -6346,13 +6530,20 @@ function AdminGeneralPortal({ setRole }: { setRole: (r: Role) => void }) {
     setNewManager("");
   };
 
-  const toggleCityActive = (cityId: string) => {
+  const toggleCityActive = async (cityId: string) => {
     if (cityId === "yafa") return toastMessage("لا يمكن تعطيل مدينة يافع (المركز الرئيسي)");
     const next = cities.map((c) => (c.id === cityId ? { ...c, active: !c.active } : c));
     setCities(next);
     saveAdminCities(next);
-    const cObj = cities.find((c) => c.id === cityId);
-    recordAdminAudit(cObj?.active ? "تعطيل مدينة" : "تفعيل مدينة", "إدارة المدن", `تعديل حالة مدينة ${cObj?.name}`);
+    const cObj = next.find((c) => c.id === cityId);
+    if (auth.currentUser && cObj) {
+      await setDoc(
+        doc(db, "cities", cityId),
+        { ...cObj, updatedAt: new Date().toISOString() },
+        { merge: true },
+      ).catch((err) => logFirestoreError(err, OperationType.UPDATE, `cities/${cityId}`));
+    }
+    recordAdminAudit(cObj?.active ? "تفعيل مدينة" : "تعطيل مدينة", "إدارة المدن", `تعديل حالة مدينة ${cObj?.name}`);
     toastMessage(`تم تحديث حالة مدينة ${cObj?.name}`);
   };
 
@@ -6926,11 +7117,13 @@ function AdminGeneralPortal({ setRole }: { setRole: (r: Role) => void }) {
 // -------------------------------------------------------------
 const sectionFirestoreMap: Record<string, string> = {
   establishments: "establishments",
+  stores: "establishments",
   users: "users",
   products: "products",
   orders: "orders",
   ads: "advertisements",
   used: "usedAds",
+  vehicles: "usedAds",
   notifications: "notifications",
   categories: "categories",
   cities: "cities",
@@ -6957,37 +7150,80 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
 
   const [metaTitle, metaSubtitle] = adminMeta[section] || [section, "إدارة سجلات المنصة"];
   const fsCollection = sectionFirestoreMap[section];
+  const isReadOnlyAudit = section === "audit";
 
-  // Sync live Firestore documents on section load
+  // Sync live Firestore documents on section load (after Firebase Auth readiness)
   useEffect(() => {
     setItems(loadAdminSectionData(section));
     if (!fsCollection) return;
-    getDocs(collection(db, fsCollection))
-      .then((snap) => {
-        if (snap.empty) return;
-        const cloudRows: AdminRecordItem[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          const statusVal: AdminRecordItem["status"] =
-            data.status === "متوقف" || data.status === "مرفوضة" || data.approved === false
-              ? (data.approved === false && !data.status ? "قيد المراجعة" : data.status || "قيد المراجعة")
-              : data.status || "نشط";
-          return {
-            id: d.id,
-            title: data.title || data.name || data.customerName || d.id,
-            detail: data.detail || [data.district, data.activity, data.email, data.price ? `${data.price} ر.ي` : ""].filter(Boolean).join(" · ") || "سجل متزامن مع Firestore",
-            status: statusVal,
-            date: data.date || (data.createdAt ? new Intl.DateTimeFormat("ar-YE", { dateStyle: "medium" }).format(new Date(data.createdAt)) : "اليوم"),
-          };
-        });
-        setItems((prev) => {
-          const map = new Map(prev.map((p) => [p.id, p]));
-          cloudRows.forEach((r) => map.set(r.id, r));
-          const merged = Array.from(map.values());
-          if (section !== "audit") saveAdminSectionData(section, merged);
-          return merged;
-        });
-      })
-      .catch(() => {});
+    let active = true;
+    let unsub: (() => void) | null = null;
+
+    const initListener = async () => {
+      try {
+        if (typeof auth.authStateReady === "function") {
+          await auth.authStateReady();
+        }
+        if (!active) return;
+        unsub = onSnapshot(
+          collection(db, fsCollection),
+          (snap) => {
+            if (!active || snap.empty) return;
+            const cloudRows: AdminRecordItem[] = snap.docs.map((d) => {
+              const data = d.data() as any;
+              const statusVal: AdminRecordItem["status"] =
+                data.status === "متوقف" || data.status === "مرفوضة" || data.approved === false
+                  ? (data.approved === false && !data.status ? "قيد المراجعة" : data.status || "قيد المراجعة")
+                  : data.approved === true && (!data.status || data.status === "قيد المراجعة")
+                  ? "معتمدة"
+                  : data.status || "نشط";
+              return {
+                id: d.id,
+                title:
+                  section === "audit"
+                    ? `${data.action || "إجراء"} — ${data.section || ""}`
+                    : data.title || data.name || data.customerName || d.id,
+                detail:
+                  section === "audit"
+                    ? `${data.target || ""} · بواسطة: ${data.admin || data.adminEmail || "الإدارة"}`
+                    : data.detail ||
+                      [data.specialty, data.district, data.activity, data.phone, data.email, data.price ? `${data.price} ر.ي` : ""]
+                        .filter(Boolean)
+                        .join(" · ") ||
+                      "سجل متزامن مع Firestore",
+                status: statusVal,
+                date:
+                  data.date ||
+                  (data.timestamp || data.createdAt
+                    ? new Intl.DateTimeFormat("ar-YE", { dateStyle: "medium" }).format(
+                        new Date(data.timestamp || data.createdAt),
+                      )
+                    : "اليوم"),
+              };
+            });
+            setItems((prev) => {
+              const map = new Map(prev.map((p) => [p.id, p]));
+              cloudRows.forEach((r) => map.set(r.id, r));
+              const merged = Array.from(map.values());
+              if (section !== "audit") saveAdminSectionData(section, merged);
+              return merged;
+            });
+          },
+          (err) => {
+            logFirestoreError(err, OperationType.LIST, fsCollection);
+          },
+        );
+      } catch (err) {
+        logFirestoreError(err, OperationType.LIST, fsCollection);
+      }
+    };
+
+    void initListener();
+
+    return () => {
+      active = false;
+      if (unsub) unsub();
+    };
   }, [section, fsCollection]);
 
   // Check URL params for action (add / edit / delete / toggle)
@@ -6996,6 +7232,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
       const search = new URLSearchParams(window.location.search);
       const action = search.get("action");
       setActionHint("");
+      if (isReadOnlyAudit) return;
       if (action === "add") {
         setFormTitle("");
         setFormDetail("");
@@ -7009,7 +7246,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
         setActionHint("اختر أي سجل أدناه ثم اضغط «تفعيل / اعتماد» أو «تعطيل».");
       }
     }
-  }, [section]);
+  }, [section, isReadOnlyAudit]);
 
   const filteredAndSortedItems = useMemo(() => {
     return items
@@ -7029,11 +7266,31 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
       });
   }, [items, queryText, statusFilter, sortBy]);
 
-  const syncRecordToFirestore = async (item: AdminRecordItem, op: "save" | "delete", approvedFlag?: boolean) => {
-    if (!fsCollection || !auth.currentUser) return;
-    if (op === "delete") {
-      await deleteDoc(doc(db, fsCollection, item.id)).catch((err) => logFirestoreError(err, OperationType.DELETE, `${fsCollection}/${item.id}`));
-    } else {
+  const syncRecordToFirestore = async (
+    item: AdminRecordItem,
+    op: "save" | "delete",
+    approvedFlag?: boolean,
+    isNew = false,
+  ): Promise<boolean> => {
+    if (!fsCollection || isReadOnlyAudit) return true;
+    const authority = await verifyFirebaseAdminAuthority();
+    if (!authority.isAdmin) {
+      toastMessage(authority.reason || "يتطلب الحفظ السحابي جلسة مدير موثقة في Firebase");
+      return false;
+    }
+
+    try {
+      if (op === "delete") {
+        await deleteDoc(doc(db, fsCollection, item.id));
+        return true;
+      }
+
+      const nowIso = new Date().toISOString();
+      const isApproved =
+        typeof approvedFlag === "boolean"
+          ? approvedFlag
+          : item.status === "نشط" || item.status === "معتمدة";
+
       const payload: Record<string, any> = {
         id: item.id,
         title: item.title,
@@ -7041,15 +7298,58 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
         detail: item.detail,
         status: item.status,
         active: item.status === "نشط" || item.status === "معتمدة",
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
       };
       if (typeof approvedFlag === "boolean") payload.approved = approvedFlag;
-      await setDoc(doc(db, fsCollection, item.id), payload, { merge: true }).catch((err) => logFirestoreError(err, OperationType.WRITE, `${fsCollection}/${item.id}`));
+
+      if (fsCollection === "establishments") {
+        payload.approved = isApproved;
+        if (isNew) {
+          payload.ownerId = authority.uid || "admin";
+          payload.district = "لبعوس";
+          payload.activity = item.detail || "متجر تجاري";
+          payload.createdAt = nowIso;
+        }
+      } else if (fsCollection === "products") {
+        payload.approved = isApproved;
+        if (isNew) {
+          payload.ownerId = authority.uid || "admin";
+          payload.establishmentId = "yafa-official";
+          payload.price = 0;
+          payload.createdAt = nowIso;
+        }
+      } else if (fsCollection === "usedAds") {
+        payload.approved = isApproved;
+        if (isNew) {
+          payload.ownerId = authority.uid || "admin";
+          payload.sellerId = authority.uid || "admin";
+          payload.createdAt = nowIso;
+        }
+      } else if (fsCollection === "professionals" && isNew) {
+        payload.specialty = item.detail || "خدمات فنية";
+        payload.phone = "770000000";
+        payload.district = "لبعوس";
+        payload.workLocation = "يافع";
+        payload.approved = isApproved;
+        payload.createdAt = nowIso;
+      } else if (fsCollection === "cities" && isNew) {
+        payload.districts = ["المركز الرئيسي"];
+        payload.localManager = "بانتظار التعيين";
+        payload.storesCount = 0;
+      }
+
+      await setDoc(doc(db, fsCollection, item.id), payload, { merge: true });
+      return true;
+    } catch (err) {
+      logFirestoreError(err, op === "delete" ? OperationType.DELETE : OperationType.WRITE, `${fsCollection}/${item.id}`);
+      toastMessage("تعذر حفظ التغيير في قاعدة بيانات Firestore — تحقق من الصلاحيات");
+      return false;
     }
   };
 
   const handleSaveAdd = async (e: FormEvent) => {
     e.preventDefault();
+    if (isReadOnlyAudit) return;
     if (!formTitle.trim()) return toastMessage("يرجى إدخال العنوان");
     const newItem: AdminRecordItem = {
       id: `${section.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-4)}`,
@@ -7061,7 +7361,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
     const next = [newItem, ...items];
     setItems(next);
     saveAdminSectionData(section, next);
-    await syncRecordToFirestore(newItem, "save", newItem.status === "نشط" || newItem.status === "معتمدة");
+    await syncRecordToFirestore(newItem, "save", newItem.status === "نشط" || newItem.status === "معتمدة", true);
     recordAdminAudit("إضافة سجل جديد", metaTitle, `إضافة: ${newItem.title} (${newItem.id})`);
     toastMessage(`تمت إضافة ${newItem.title} بنجاح`);
     setActiveModal(null);
@@ -7069,7 +7369,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
 
   const handleSaveEdit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!selectedItem || !formTitle.trim()) return;
+    if (isReadOnlyAudit || !selectedItem || !formTitle.trim()) return;
     const updatedItem: AdminRecordItem = {
       ...selectedItem,
       title: formTitle.trim(),
@@ -7088,7 +7388,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
   };
 
   const handleConfirmDelete = async () => {
-    if (!selectedItem) return;
+    if (isReadOnlyAudit || !selectedItem) return;
     const next = items.filter((it) => it.id !== selectedItem.id);
     setItems(next);
     saveAdminSectionData(section, next);
@@ -7100,6 +7400,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
   };
 
   const handleToggleStatus = async (item: AdminRecordItem) => {
+    if (isReadOnlyAudit) return;
     const nextStatus: AdminRecordItem["status"] = item.status === "نشط" || item.status === "معتمدة" ? "متوقف" : "نشط";
     const updatedItem = { ...item, status: nextStatus };
     const next = items.map((it) => (it.id === item.id ? updatedItem : it));
@@ -7111,6 +7412,7 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
   };
 
   const handleApproveReject = async (item: AdminRecordItem, approve: boolean) => {
+    if (isReadOnlyAudit) return;
     const nextStatus: AdminRecordItem["status"] = approve ? "معتمدة" : "مرفوضة";
     const updatedItem = { ...item, status: nextStatus };
     const next = items.map((it) => (it.id === item.id ? updatedItem : it));
@@ -7207,18 +7509,24 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
 
           {/* Action Bar (Add, Sort, Export) */}
           <div className="flex items-center justify-between gap-2">
-            <Button
-              kind="gold"
-              className="flex-1 text-xs py-1.5 h-9"
-              onClick={() => {
-                setFormTitle("");
-                setFormDetail("");
-                setFormStatus("نشط");
-                setActiveModal("add");
-              }}
-            >
-              <Plus className="w-4 h-4" /> إضافة جديد
-            </Button>
+            {!isReadOnlyAudit ? (
+              <Button
+                kind="gold"
+                className="flex-1 text-xs py-1.5 h-9"
+                onClick={() => {
+                  setFormTitle("");
+                  setFormDetail("");
+                  setFormStatus("نشط");
+                  setActiveModal("add");
+                }}
+              >
+                <Plus className="w-4 h-4" /> إضافة جديد
+              </Button>
+            ) : (
+              <div className="flex-1 text-[11px] font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                سجل تدقيق محمي (للقراءة فقط)
+              </div>
+            )}
             <div className="flex gap-1.5">
               <select
                 value={sortBy}
@@ -7289,52 +7597,54 @@ function AdminSectionDetailView({ section, setRole }: { section: string; setRole
                   </div>
 
                   {/* Actions Row */}
-                  <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1 border-t border-slate-100">
-                    {(section === "establishments" || section === "used" || section === "referrals") && item.status !== "معتمدة" && (
+                  {!isReadOnlyAudit && (
+                    <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1 border-t border-slate-100">
+                      {(section === "establishments" || section === "stores" || section === "used" || section === "vehicles" || section === "referrals" || section === "professionals") && item.status !== "معتمدة" && (
+                        <button
+                          type="button"
+                          className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 flex items-center gap-1"
+                          onClick={() => handleApproveReject(item, true)}
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>اعتماد</span>
+                        </button>
+                      )}
+                      {(section === "establishments" || section === "stores" || section === "used" || section === "vehicles" || section === "referrals" || section === "professionals") && item.status !== "مرفوضة" && (
+                        <button
+                          type="button"
+                          className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-[10px] font-bold hover:bg-amber-100 flex items-center gap-1"
+                          onClick={() => handleApproveReject(item, false)}
+                        >
+                          <X className="w-3 h-3" />
+                          <span>رفض</span>
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 flex items-center gap-1"
-                        onClick={() => handleApproveReject(item, true)}
+                        className="px-2.5 py-0.5 rounded-md bg-[#edf6f0] text-emerald-800 text-[10px] font-bold hover:bg-emerald-100 flex items-center gap-1"
+                        onClick={() => handleToggleStatus(item)}
                       >
                         <Check className="w-3 h-3" />
-                        <span>اعتماد</span>
+                        <span>{item.status === "نشط" || item.status === "معتمدة" ? "تعطيل" : "تفعيل"}</span>
                       </button>
-                    )}
-                    {(section === "establishments" || section === "used" || section === "referrals") && item.status !== "مرفوضة" && (
                       <button
                         type="button"
-                        className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-[10px] font-bold hover:bg-amber-100 flex items-center gap-1"
-                        onClick={() => handleApproveReject(item, false)}
+                        className="px-2.5 py-0.5 rounded-md bg-[#eaf3f8] text-sky-800 text-[10px] font-bold hover:bg-sky-100 flex items-center gap-1"
+                        onClick={() => openEdit(item)}
                       >
-                        <X className="w-3 h-3" />
-                        <span>رفض</span>
+                        <Pencil className="w-3 h-3" />
+                        <span>تعديل</span>
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="px-2.5 py-0.5 rounded-md bg-[#edf6f0] text-emerald-800 text-[10px] font-bold hover:bg-emerald-100 flex items-center gap-1"
-                      onClick={() => handleToggleStatus(item)}
-                    >
-                      <Check className="w-3 h-3" />
-                      <span>{item.status === "نشط" || item.status === "معتمدة" ? "تعطيل" : "تفعيل"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="px-2.5 py-0.5 rounded-md bg-[#eaf3f8] text-sky-800 text-[10px] font-bold hover:bg-sky-100 flex items-center gap-1"
-                      onClick={() => openEdit(item)}
-                    >
-                      <Pencil className="w-3 h-3" />
-                      <span>تعديل</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="px-2.5 py-0.5 rounded-md bg-[#fdeeed] text-rose-700 text-[10px] font-bold hover:bg-rose-100 flex items-center gap-1"
-                      onClick={() => openDelete(item)}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>حذف</span>
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        className="px-2.5 py-0.5 rounded-md bg-[#fdeeed] text-rose-700 text-[10px] font-bold hover:bg-rose-100 flex items-center gap-1"
+                        onClick={() => openDelete(item)}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>حذف</span>
+                      </button>
+                    </div>
+                  )}
                 </article>
               ))
             ) : (
@@ -8864,33 +9174,83 @@ export default function App() {
   }, []);
 
   const [sessionVerifiedAdmin, setSessionVerifiedAdmin] = useState(false);
+  const [fbAuthTick, setFbAuthTick] = useState(0);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, () => {});
+    setPersistence(auth, browserLocalPersistence).catch(() => {});
+    const unsub = onAuthStateChanged(auth, () => {
+      setFbAuthTick((n) => n + 1);
+    });
     return () => unsub();
   }, []);
 
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
-    fetch("/api/session", { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(async (json) => {
+
+    const verifySession = async () => {
+      try {
+        if (typeof auth.authStateReady === "function") {
+          await auth.authStateReady();
+        }
+      } catch {}
+
+      try {
+        const res = await fetch("/api/session", { credentials: "include" });
+        const json = res.ok ? await res.json() : null;
         if (cancelled) return;
+
         if (!json || !json.authenticated) {
-          setSessionVerifiedAdmin(false);
-          if (role === "owner" || role === "admin") {
-            setRole(null);
-            safeStorage.removeItem("yafa-role");
+          // If Firebase persists a verified admin user across server restarts, silently restore server session
+          if (auth.currentUser) {
+            const fbCheck = await verifyFirebaseAdminAuthority();
+            if (fbCheck.isAdmin && fbCheck.email) {
+              const idToken = await auth.currentUser.getIdToken(true).catch(() => "");
+              if (idToken) {
+                const syncRes = await fetch("/api/session", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "x-requested-with": "XMLHttpRequest" },
+                  credentials: "include",
+                  body: JSON.stringify({
+                    role: "admin",
+                    email: fbCheck.email,
+                    firebaseIdToken: idToken,
+                  }),
+                });
+                const syncJson = await syncRes.json().catch(() => null);
+                if (!cancelled && syncRes.ok && syncJson?.success) {
+                  await syncAdminFirestoreIdentity();
+                  setSessionVerifiedAdmin(true);
+                  setRole("admin");
+                  safeStorage.setItem("yafa-role", "admin");
+                  if (typeof document !== "undefined") {
+                    document.cookie = "yafa-role=admin; path=/; max-age=2592000; SameSite=Lax";
+                  }
+                  return;
+                }
+              }
+            }
+          }
+
+          if (!cancelled) {
+            setSessionVerifiedAdmin(false);
+            if (role === "owner" || role === "admin") {
+              setRole(null);
+              safeStorage.removeItem("yafa-role");
+            }
           }
           return;
         }
+
         const serverRole = json.role;
         if (serverRole === "admin") {
           let verified = false;
           if (auth.currentUser) {
             const fbCheck = await verifyFirebaseAdminAuthority();
             verified = fbCheck.isAdmin;
+            if (verified) {
+              await syncAdminFirestoreIdentity();
+            }
           } else {
             verified = json.email === "majdaltrki8@gmail.com" || json.authMethod === "payload";
           }
@@ -8928,14 +9288,16 @@ export default function App() {
             safeStorage.removeItem("yafa-role");
           }
         }
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setSessionVerifiedAdmin(false);
-      });
+      }
+    };
+
+    void verifySession();
     return () => {
       cancelled = true;
     };
-  }, [mounted, role]);
+  }, [mounted, role, fbAuthTick]);
 
   const effectiveRole = role;
 

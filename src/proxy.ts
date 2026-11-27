@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import payloadConfig from '@payload-config'
+import { getPayload } from 'payload'
 import { verifySessionToken } from '@/lib/session'
 
 const adminSections = new Set([
@@ -45,13 +47,32 @@ const payloadAdminPrefixes = [
   '/admin/reset',
 ]
 
+async function hasVerifiedPayloadAdmin(request: NextRequest): Promise<boolean> {
+  if (!request.cookies.has('payload-token')) return false
+  try {
+    const payload = await getPayload({ config: payloadConfig })
+    const { user } = await payload.auth({ headers: request.headers })
+    return Boolean(user && user.collection === 'admins')
+  } catch {
+    return false
+  }
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
-  const roleCookie = request.cookies.get('yafa-role')?.value
   const session = await verifySessionToken(request.cookies.get('yafa-session')?.value)
 
-  const hasPayloadSession = roleCookie === 'admin' && request.cookies.has('payload-token')
   const hasVerifiedAdminSession = session?.role === 'admin'
+  const needsAdminCheck =
+    pathname.startsWith('/management') ||
+    pathname === '/audit' ||
+    pathname === '/review-board' ||
+    (pathname.startsWith('/admin') &&
+      pathname !== '/admin' &&
+      !payloadAdminPrefixes.some((prefix) => pathname.startsWith(prefix)))
+
+  const hasPayloadSession =
+    needsAdminCheck && !hasVerifiedAdminSession ? await hasVerifiedPayloadAdmin(request) : false
 
   // Protect internal audit, review-board, and management routes behind verified Admin session
   if (

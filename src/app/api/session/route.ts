@@ -8,7 +8,9 @@ const AUTHORIZED_ADMIN_EMAILS = new Set([
   'majdaltrki8@gmail.com',
 ])
 
-async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; email: string; emailVerified: boolean } | null> {
+async function verifyFirebaseIdToken(
+  idToken: string,
+): Promise<{ uid: string; email: string; emailVerified: boolean; customClaims: Record<string, any> } | null> {
   try {
     const res = await fetch(
       `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
@@ -22,10 +24,20 @@ async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; em
     const data = await res.json()
     const user = data?.users?.[0]
     if (!user?.localId || !user?.email) return null
+    let customClaims: Record<string, any> = {}
+    if (typeof user.customAttributes === 'string' && user.customAttributes.trim()) {
+      try {
+        const parsed = JSON.parse(user.customAttributes)
+        if (parsed && typeof parsed === 'object') customClaims = parsed
+      } catch {
+        customClaims = {}
+      }
+    }
     return {
       uid: String(user.localId),
       email: String(user.email).toLowerCase(),
       emailVerified: Boolean(user.emailVerified),
+      customClaims,
     }
   } catch {
     return null
@@ -35,18 +47,39 @@ async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; em
 export async function GET(req: NextRequest) {
   const token = req.cookies.get('yafa-session')?.value
   const session = await verifySessionToken(token)
-  if (!session) {
-    return NextResponse.json({ authenticated: false, role: null, email: null, phone: null, name: null })
+  if (session) {
+    return NextResponse.json({
+      authenticated: true,
+      role: session.role,
+      email: session.email,
+      uid: session.uid || null,
+      phone: session.phone || null,
+      name: session.name || null,
+      authMethod: session.authMethod || null,
+    })
   }
-  return NextResponse.json({
-    authenticated: true,
-    role: session.role,
-    email: session.email,
-    uid: session.uid || null,
-    phone: session.phone || null,
-    name: session.name || null,
-    authMethod: session.authMethod || null,
-  })
+
+  try {
+    if (req.cookies.has('payload-token')) {
+      const payload = await getPayload({ config })
+      const { user } = await payload.auth({ headers: req.headers })
+      if (user && user.collection === 'admins') {
+        return NextResponse.json({
+          authenticated: true,
+          role: 'admin',
+          email: String(user.email || 'majdaltrki8@gmail.com'),
+          uid: String(user.id || ''),
+          phone: null,
+          name: 'المدير العام',
+          authMethod: 'payload',
+        })
+      }
+    }
+  } catch {
+    // ignore fallback failure
+  }
+
+  return NextResponse.json({ authenticated: false, role: null, email: null, phone: null, name: null })
 }
 
 export async function POST(req: NextRequest) {
@@ -64,6 +97,8 @@ export async function POST(req: NextRequest) {
     let verifiedEmail = rawEmail
     let verifiedUid: string | undefined
     let verifiedFbEmail = false
+    let fbCustomClaims: Record<string, any> = {}
+    let authMethod: 'firebase' | 'payload' = 'firebase'
 
     if (firebaseIdToken) {
       const fbUser = await verifyFirebaseIdToken(firebaseIdToken)
@@ -73,6 +108,7 @@ export async function POST(req: NextRequest) {
       verifiedEmail = fbUser.email
       verifiedUid = fbUser.uid
       verifiedFbEmail = fbUser.emailVerified
+      fbCustomClaims = fbUser.customClaims
     }
 
     if (role === 'admin') {
@@ -90,14 +126,17 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const hasCustomClaimAdmin = Boolean(verifiedUid) && fbCustomClaims.admin === true
       const hasVerifiedFirebaseAdmin =
-        Boolean(verifiedUid) && verifiedFbEmail && AUTHORIZED_ADMIN_EMAILS.has(verifiedEmail)
+        Boolean(verifiedUid) &&
+        (hasCustomClaimAdmin || (verifiedFbEmail && AUTHORIZED_ADMIN_EMAILS.has(verifiedEmail)))
       if (!hasVerifiedFirebaseAdmin && !payloadAdminOk) {
         return NextResponse.json(
           { success: false, error: 'غير مصرح: يتطلب الدخول الموثق عبر Firebase بحساب المدير المعتمد أو بيانات مدير Payload الصحيحة' },
           { status: 403 },
         )
       }
+      authMethod = hasVerifiedFirebaseAdmin ? 'firebase' : 'payload'
     } else {
       // Visitor & Owner sessions require a valid Firebase ID token OR must be issued via phone-login / phone-register
       if (!verifiedUid) {
@@ -112,6 +151,7 @@ export async function POST(req: NextRequest) {
       role,
       email: verifiedEmail,
       uid: verifiedUid,
+      authMethod,
     })
 
     const response = NextResponse.json({
@@ -119,6 +159,7 @@ export async function POST(req: NextRequest) {
       role,
       email: verifiedEmail,
       uid: verifiedUid || null,
+      customClaimAdmin: Boolean(fbCustomClaims.admin === true),
     })
 
     response.cookies.set('yafa-session', sessionToken, {

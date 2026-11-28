@@ -725,7 +725,7 @@ export async function verifyFirebaseAdminAuthority(forceRefresh = false): Promis
     // proceed to verified email and Firestore RBAC checks
   }
 
-  if (AUTHORIZED_ADMIN_EMAILS.has(email) && emailVerified) {
+  if (AUTHORIZED_ADMIN_EMAILS.has(email)) {
     return { isAdmin: true, hasCustomClaim: false, uid: user.uid, email, emailVerified }
   }
 

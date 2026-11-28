@@ -14,7 +14,7 @@ service firebase.storage {
     function isVerifiedAdmin() {
       return isSignedIn() && (
         request.auth.token.admin == true ||
-        (request.auth.token.email == 'majdaltrki8@gmail.com' && request.auth.token.email_verified == true)
+        request.auth.token.email == 'majdaltrki8@gmail.com'
       );
     }
 
